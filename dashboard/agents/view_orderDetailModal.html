@@ -1,0 +1,758 @@
+<style>
+    
+    /* Modal Styles */
+    .modal {
+        display: none;
+        position: fixed;
+        z-index: 1000;
+        left: 0;
+        top: 0;
+        width: 100%;
+        height: 100%;
+        background-color: rgba(0, 0, 0, 0.6);
+        animation: fadeIn 0.3s ease-in-out;
+        backdrop-filter: blur(2px);
+    }
+
+    .modal.show {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    .modal.hide {
+        opacity: 0;
+        visibility: none;
+        transform: scale(0.8);
+    }
+
+    .modal-content2 {
+        background-color: #ffffff;
+        border-radius: 0px;
+        box-shadow: 0 25px 50px rgba(0, 0, 0, 0.25);
+        width: 95%;
+        max-width: 900px;
+        max-height: 95vh;
+        overflow-y: auto;
+        animation: slideIn 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+    }
+
+    /* Custom Scrollbar */
+    .modal-content2::-webkit-scrollbar {
+        width: 6px;
+    }
+
+    .modal-content2::-webkit-scrollbar-track {
+        background: #f1f1f1;
+        border-radius: 3px;
+    }
+
+    .modal-content2::-webkit-scrollbar-thumb {
+        background: #667eea;
+        border-radius: 3px;
+    }
+
+    .modal-content2::-webkit-scrollbar-thumb:hover {
+        background: #764ba2;
+    }
+
+    .modal-header {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 24px 28px;
+        border-radius:  0px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+    }
+
+    .modal-header h2 {
+        font-size: 26px;
+        font-weight: 700;
+        margin: 0;
+        letter-spacing: -0.5px;
+    }
+
+    .close {
+        background: rgba(255, 255, 255, 0.1);
+        border: none;
+        color: white;
+        font-size: 24px;
+        cursor: pointer;
+        padding: 8px;
+        width: 36px;
+        height: 36px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 50%;
+        transition: all 0.2s ease;
+    }
+
+    .close:hover {
+        background-color: rgba(255, 255, 255, 0.2);
+        transform: scale(1.1);
+    }
+
+    .modal-body {
+        padding: 32px;
+        background: #f8fafc;
+    }
+
+    /* Loading Spinner */
+    .loading {
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        padding: 60px;
+    }
+
+    .spinner {
+        width: 48px;
+        height: 48px;
+        border: 4px solid #e2e8f0;
+        border-top: 4px solid #667eea;
+        border-radius: 50%;
+        animation: spin 1s linear infinite;
+        margin-bottom: 16px;
+    }
+
+    .loading-text {
+        color: #64748b;
+        font-size: 16px;
+        font-weight: 500;
+    }
+
+    /* Order Details Styles */
+    .order-section {
+        margin-bottom: 32px;
+        background: #ffffff;
+        border-radius: 12px;
+        padding: 28px;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+        border: 1px solid #e2e8f0;
+        position: relative;
+        overflow: hidden;
+    }
+
+    .order-section::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 4px;
+        height: 100%;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    }
+
+    .section-title {
+        font-size: 20px;
+        font-weight: 700;
+        color: #1e293b;
+        margin-bottom: 20px;
+        display: flex;
+        align-items: center;
+        position: relative;
+        padding-bottom: 12px;
+    }
+
+    .section-title::after {
+        content: '';
+        position: absolute;
+        bottom: 0;
+        left: 0;
+        width: 40px;
+        height: 3px;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        border-radius: 2px;
+    }
+
+    .section-title .icon {
+        width: 24px;
+        height: 24px;
+        margin-right: 12px;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        border-radius: 6px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: white;
+        font-size: 14px;
+        font-weight: 600;
+    }
+
+    .order-info {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        gap: 20px;
+    }
+
+    .info-item {
+        display: flex;
+        flex-direction: column;
+        padding: 16px;
+        background: #f8fafc;
+        border-radius: 8px;
+        border: 1px solid #e2e8f0;
+        transition: all 0.2s ease;
+    }
+
+    .info-item:hover {
+        border-color: #667eea;
+        box-shadow: 0 2px 8px rgba(102, 126, 234, 0.1);
+    }
+
+    .info-label {
+        font-weight: 600;
+        color: #475569;
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        margin-bottom: 8px;
+    }
+
+    .info-value {
+        color: #1e293b;
+        font-size: 15px;
+        font-weight: 500;
+        word-break: break-word;
+        line-height: 1.5;
+    }
+
+    /* Address Formatting */
+    .address-container {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 24px;
+    }
+
+    .address-block {
+        background: #f8fafc;
+        border: 1px solid #e2e8f0;
+        border-radius: 8px;
+        padding: 20px;
+    }
+
+    .address-title {
+        font-weight: 700;
+        color: #1e293b;
+        font-size: 16px;
+        margin-bottom: 16px;
+        display: flex;
+        align-items: center;
+    }
+
+    .address-title::before {
+        content: '📍';
+        margin-right: 8px;
+    }
+
+    .address-field {
+        display: flex;
+        justify-content: space-between;
+        padding: 8px 0;
+        border-bottom: 1px solid #e2e8f0;
+    }
+
+    .address-field:last-child {
+        border-bottom: none;
+    }
+
+    .address-label {
+        font-weight: 600;
+        color: #64748b;
+        font-size: 13px;
+        min-width: 80px;
+    }
+
+    .address-value {
+        color: #1e293b;
+        font-weight: 500;
+        text-align: right;
+        flex: 1;
+    }
+
+    /* Status Badges */
+    .status-badge {
+        display: inline-flex;
+        align-items: center;
+        padding: 6px 14px;
+        border-radius: 20px;
+        font-size: 12px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+
+    .status-pending { background: #fef3c7; color: #92400e; }
+    .status-processing { background: #dbeafe; color: #1e40af; }
+    .status-shipped { background: #d1fae5; color: #065f46; }
+    .status-delivered { background: #dcfce7; color: #166534; }
+    .status-cancelled { background: #fee2e2; color: #991b1b; }
+
+    /* Items Table */
+    .items-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 20px;
+        background: white;
+        border-radius: 12px;
+        overflow: hidden;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+    }
+
+    .items-table th {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 16px 12px;
+        text-align: left;
+        font-weight: 700;
+        font-size: 13px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+
+    .items-table td {
+        padding: 16px 12px;
+        border-bottom: 1px solid #e2e8f0;
+        font-size: 14px;
+        font-weight: 500;
+    }
+
+    .items-table tr:last-child td {
+        border-bottom: none;
+    }
+
+    .items-table tr:nth-child(even) {
+        background: #f8fafc;
+    }
+
+    .items-table tr:hover {
+        background: #f1f5f9;
+    }
+
+    /* Summary Box */
+    .summary-box {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        border-radius: 12px;
+        padding: 28px;
+        margin-top: 24px;
+        box-shadow: 0 8px 25px rgba(102, 126, 234, 0.3);
+    }
+
+    .summary-item {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 12px;
+        font-size: 16px;
+        font-weight: 500;
+    }
+
+    .summary-item:last-child {
+        margin-bottom: 0;
+        font-weight: 700;
+        font-size: 20px;
+        border-top: 2px solid rgba(255, 255, 255, 0.2);
+        padding-top: 16px;
+        margin-top: 16px;
+    }
+
+    /* Error Message */
+    .error-message {
+        background: linear-gradient(135deg, #fee2e2 0%, #fecaca 100%);
+        color: #991b1b;
+        padding: 20px;
+        border-radius: 12px;
+        text-align: center;
+        border: 2px solid #fca5a5;
+        font-weight: 600;
+    }
+
+    /* Animations */
+    @keyframes fadeIn {
+        from { opacity: 0; }
+        to { opacity: 1; }
+    }
+
+    @keyframes slideIn {
+        from { 
+            opacity: 0;
+            transform: translateY(-30px) scale(0.9);
+        }
+        to { 
+            opacity: 1;
+            transform: translateY(0) scale(1);
+        }
+    }
+
+    @keyframes spin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+    }
+
+    /* Responsive */
+    @media (max-width: 768px) {
+        .modal-content2 {
+            width: 98%;
+            margin: 8px;
+            max-height: 98vh;
+        }
+        
+        .modal-body {
+            padding: 20px;
+        }
+        
+        .order-info {
+            grid-template-columns: 1fr;
+        }
+        
+        .address-container {
+            grid-template-columns: 1fr;
+        }
+        
+        .items-table {
+            font-size: 12px;
+        }
+        
+        .items-table th,
+        .items-table td {
+            padding: 10px 8px;
+        }
+        
+        .section-title {
+            font-size: 18px;
+        }
+    }
+
+    @media (max-width: 480px) {
+        .modal-header {
+            padding: 20px;
+        }
+        
+        .modal-header h2 {
+            font-size: 22px;
+        }
+        
+        .order-section {
+            padding: 20px;
+        }
+    }
+</style>
+
+<!-- Order Details Modal -->
+<div id="orderModal" class="modal fade" tabindex="-1" aria-hidden="true">
+    <div class="modal-content2">
+        <div class="modal-header">
+            <h2>Détails de la Commande</h2>
+            <button class="close" onclick="closeOrderModal()">&times;</button>
+        </div>
+        <div class="modal-body" id="orderModalBody">
+            <!-- Content will be loaded here -->
+        </div>
+    </div>
+</div>
+
+<script>
+
+    function viewOrder(orderId) {
+        const modal = document.getElementById('orderModal');
+        const modalBody = document.getElementById('orderModalBody');
+        
+        // Show modal with loading state
+        modal.classList.add('show');
+        modal.classList.remove('hide');
+        modalBody.innerHTML = `
+            <div class="loading">
+                <div class="spinner"></div>
+                <div class="loading-text">Chargement des détails...</div>
+            </div>
+        `;
+        
+        // Fetch order details from your PHP API
+        fetch(`../controllers/get_order_details.php?order_id=${orderId}`)
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    displayOrderDetails(data.data);
+                } else {
+                    displayError(data.message || 'Erreur lors du chargement des détails de la commande');
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                displayError('Erreur de connexion. Veuillez réessayer.');
+            });
+    }
+
+    // Function to display order details in modal
+    function displayOrderDetails(orderData) {
+        const modalBody = document.getElementById('orderModalBody');
+        const { order, items, summary } = orderData;
+        
+        const html = `
+            <!-- Order Information -->
+            <div class="order-section">
+                <div class="section-title">
+                    <div class="icon">📋</div>
+                    Informations de la Commande
+                </div>
+                <div class="order-info">
+                    <div class="info-item">
+                        <div class="info-label">Numéro de Commande</div>
+                        <div class="info-value">${order.order_number || 'N/A'}</div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">ID Externe</div>
+                        <div class="info-value">${order.external_order_id || 'N/A'}</div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">Statut de Commande</div>
+                        <div class="info-value">
+                            <span class="status-badge status-${(order.status || 'pending').toLowerCase()}">${order.status || 'Pending'}</span>
+                        </div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">Statut de Paiement</div>
+                        <div class="info-value">
+                            <span class="status-badge status-${(order.payment_status || 'pending').toLowerCase()}">${order.payment_status || 'Pending'}</span>
+                        </div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">Date de Commande</div>
+                        <div class="info-value">${formatDate(order.order_date)}</div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">Plateforme</div>
+                        <div class="info-value">${order.platform || 'N/A'}</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Customer Information -->
+            <div class="order-section">
+                <div class="section-title">
+                    <div class="icon">👤</div>
+                    Informations Client
+                </div>
+                <div class="order-info">
+                    <div class="info-item">
+                        <div class="info-label">Nom du Client</div>
+                        <div class="info-value">${order.customer_name || 'N/A'}</div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">Email</div>
+                        <div class="info-value">${order.customer_email || 'N/A'}</div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">Téléphone</div>
+                        <div class="info-value">${order.customer_phone || 'N/A'}</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Shipping Information -->
+            <div class="order-section">
+                <div class="section-title">
+                    <div class="icon">🚚</div>
+                    Informations de Livraison
+                </div>
+                <div class="address-container">
+                    ${formatAddress('Adresse de Livraison', order.shipping_address)}
+                    ${formatAddress('Adresse de Facturation', order.billing_address)}
+                </div>
+                <div class="order-info" style="margin-top: 20px;">
+                    <div class="info-item">
+                        <div class="info-label">Méthode de Livraison</div>
+                        <div class="info-value">${order.shipping_method || 'N/A'}</div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">Numéro de Suivi</div>
+                        <div class="info-value">${order.tracking_number || 'N/A'}</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Package Information -->
+            <div class="order-section">
+                <div class="section-title">
+                    <div class="icon">📦</div>
+                    Informations du Colis
+                </div>
+                <div class="order-info">
+                    <div class="info-item">
+                        <div class="info-label">Poids (kg)</div>
+                        <div class="info-value">${order.weight || 0}</div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">Longueur (cm)</div>
+                        <div class="info-value">${order.length || 0}</div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">Largeur (cm)</div>
+                        <div class="info-value">${order.width || 0}</div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">Hauteur (cm)</div>
+                        <div class="info-value">${order.height || 0}</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Order Items -->
+            <div class="order-section">
+                <div class="section-title">
+                    <div class="icon">🛍️</div>
+                    Articles Commandés
+                </div>
+                <table class="items-table">
+                    <thead>
+                        <tr>
+                            <th>Produit</th>
+                            <th>SKU</th>
+                            <th>Quantité</th>
+                            <th>Prix Unitaire</th>
+                            <th>Total</th>
+                            <th>Poids</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${items.map(item => `
+                            <tr>
+                                <td>${item.product_name || 'N/A'}</td>
+                                <td>${item.product_sku || 'N/A'}</td>
+                                <td>${item.quantity}</td>
+                                <td>${formatCurrency(item.unit_price, order.currency)}</td>
+                                <td>${formatCurrency(item.total_price, order.currency)}</td>
+                                <td>${item.weight || 0} kg</td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Order Summary -->
+            <div class="summary-box">
+                <div class="summary-item">
+                    <span>Nombre d'articles:</span>
+                    <span>${summary.total_items}</span>
+                </div>
+                <div class="summary-item">
+                    <span>Quantité totale:</span>
+                    <span>${summary.total_quantity}</span>
+                </div>
+                <div class="summary-item">
+                    <span>Sous-total:</span>
+                    <span>${formatCurrency(summary.subtotal, order.currency)}</span>
+                </div>
+                <div class="summary-item">
+                    <span>Total:</span>
+                    <span>${formatCurrency(order.total_amount, order.currency)}</span>
+                </div>
+            </div>
+        `;
+        
+        modalBody.innerHTML = html;
+    }
+
+    // Function to format address data
+    function formatAddress(title, addressData) {
+        if (!addressData) {
+            return `
+                <div class="address-block">
+                    <div class="address-title">${title}</div>
+                    <div class="address-field">
+                        <span class="address-value">Aucune adresse disponible</span>
+                    </div>
+                </div>
+            `;
+        }
+
+        let address;
+        try {
+            address = typeof addressData === 'string' ? JSON.parse(addressData) : addressData;
+        } catch (e) {
+            address = { full_address: addressData };
+        }
+
+        const fields = [
+            { key: 'first_name', label: 'Prénom' },
+            { key: 'last_name', label: 'Nom' },
+            { key: 'company', label: 'Société' },
+            { key: 'address_1', label: 'Adresse 1' },
+            { key: 'address_2', label: 'Adresse 2' },
+            { key: 'city', label: 'Ville' },
+            { key: 'state', label: 'État/Région' },
+            { key: 'postcode', label: 'Code postal' },
+            { key: 'country', label: 'Pays' },
+            { key: 'phone', label: 'Téléphone' }
+        ];
+
+        const addressFields = fields
+            .filter(field => address[field.key] && address[field.key].trim() !== '')
+            .map(field => `
+                <div class="address-field">
+                    <span class="address-label">${field.label}:</span>
+                    <span class="address-value">${address[field.key]}</span>
+                </div>
+            `).join('');
+
+        return `
+            <div class="address-block">
+                <div class="address-title">${title}</div>
+                ${addressFields || '<div class="address-field"><span class="address-value">Informations incomplètes</span></div>'}
+            </div>
+        `;
+    }
+
+    
+    function displayError(message) {
+        const modalBody = document.getElementById('orderModalBody');
+        modalBody.innerHTML = `
+            <div class="error-message">
+                <strong>Erreur:</strong> ${message}
+            </div>
+        `;
+    }
+
+    // Close modal when clicking outside
+    document.addEventListener('click', function(event) {
+        const modal = document.getElementById('orderModal');
+        if (event.target === modal) {
+            closeOrderModal();
+        }
+    });
+
+    // Close modal with Escape key
+    document.addEventListener('keydown', function(event) {
+        if (event.key === 'Escape') {
+            closeOrderModal();
+        }
+    });
+
+    // Utility function to format date
+    function formatDate(dateString) {
+        if (!dateString) return 'N/A';
+        const date = new Date(dateString);
+        return date.toLocaleDateString('fr-FR', {
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit'
+        });
+    }
+
+    // Utility function to format currency
+    function formatCurrency(amount, currency = 'EUR') {
+        if (amount === null || amount === undefined) return 'N/A';
+        return new Intl.NumberFormat('fr-FR', {
+            style: 'currency',
+            currency: currency || 'EUR'
+        }).format(amount);
+    }
+
+</script>

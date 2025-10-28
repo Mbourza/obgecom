@@ -1,0 +1,27 @@
+# Enable rewrite engine
+RewriteEngine On
+
+# ----------------------------
+# Hide .php extensions automatically
+# ----------------------------
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteCond %{REQUEST_FILENAME}\.php -f
+RewriteRule ^(.*)$ $1.php [L]
+
+# ----------------------------
+# Custom aliases
+# ----------------------------
+RewriteRule ^home$ index.php [L]                # /home → index.php
+RewriteRule ^lg$ login.php [L]                 # /lg → login.php
+RewriteRule ^signup$ register.php [L]          # /signup → register.php
+RewriteRule ^dashboard$ dashboard/index.php [L]
+RewriteRule ^activate$ dashboard/controllers/activate_free_plan.php [L]
+RewriteRule ^plans$ dashboard/plans.php [L]
+
+
+# ----------------------------
+# Optional: remove trailing slash
+# ----------------------------
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^(.*)/$ /$1 [R=301,L]
+

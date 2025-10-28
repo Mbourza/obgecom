@@ -1,0 +1,2 @@
+# Use home.php as the main homepage
+DirectoryIndex home.php

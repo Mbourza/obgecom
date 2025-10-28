@@ -1,0 +1,21 @@
+# -----------------------------------------
+# Obgecom.com robots.txt
+# Optimized for SEO and security
+# -----------------------------------------
+
+# Allow all robots to crawl most of the site
+User-agent: *
+Disallow: /dashboard/
+Disallow: /admin/
+Disallow: /login.php
+Disallow: /register.php
+Disallow: /private/
+Disallow: /config/
+Disallow: /includes/
+
+# Allow CSS, JS, images to be crawled
+Allow: /assets/
+Allow: /uploads/
+
+# Sitemap location
+Sitemap: https://obgecom.com/sitemap.xml
