@@ -12,10 +12,10 @@ $GLOBALS['config'] = array(
 
 	'mysql' => array(
 
-		'host' => 'srv1580.hstgr.io',
-		'user' => 'u256132326_platform',
-		'pass' => 'ObgA11Azerty;;',
-		'db'   => 'u256132326_platform' 
+		'host' => '',
+		'user' => '',
+		'pass' => '',
+		'db'   => '' 
 	),
     
     'remember' => array(
