@@ -1,8 +1,8 @@
 <?php
 
 // Merchant credentials (provided by CMI/Attijari)
-define('CMI_MERCHANT_ID', '810001004'); #
-define('CMI_SECRET_KEY', 'Oi_@2025091819'); #
+define('CMI_MERCHANT_ID', ''); #
+define('CMI_SECRET_KEY', ''); #
 
 // Gateway URL
 define('CMI_GATEWAY_URL', 'https://attijari-payment.cmi.co.ma/fim/est3Dgate'); 
