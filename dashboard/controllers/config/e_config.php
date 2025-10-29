@@ -1,9 +1,9 @@
 <?php
 // Configuration pour la connexion IMAP/SMTP
-define('IMAP_HOST', 'imap.hostinger.com');
+define('IMAP_HOST', '');
 define('IMAP_PORT', 993);
 define('IMAP_SSL', true);
-define('SMTP_HOST', 'smtp.hostinger.com');
+define('SMTP_HOST', '');
 define('SMTP_PORT', 587);
 define('EMAIL_USERNAME', '');
 define('EMAIL_PASSWORD', '');
