@@ -1,12 +1,8 @@
-<?php
-if(file_exists(stream_resolve_include_path("../core/init.php"))) {
+<?php if(file_exists(stream_resolve_include_path("../core/init.php"))) {
     require_once("../core/init.php");
 }
 
-header('Content-Type: application/json');
-header('Access-Control-Allow-Origin: *');
-header('Access-Control-Allow-Methods: POST');
-header('Access-Control-Allow-Headers: Content-Type');
+if (!defined('SHIPPING_DISPATCHER_INCLUDED')):
 
 $db = DB::getInstance();
 
@@ -28,6 +24,7 @@ if (!isset($_POST['action'])) {
 }
 
 try {
+
     $user_id = getCurrentUserId($db);
 
     if (!$user_id) {
@@ -54,7 +51,6 @@ try {
         }
 
         $order = $order[0]; // Get first result
-
         // Verify order is confirmed before shipping
         if ($order['status'] !== 'confirmed') {
             throw new Exception('La commande doit être confirmée avant l\'expédition');
@@ -198,18 +194,24 @@ try {
         echo json_encode(['success' => false, 'message' => 'Action invalide']);
     }
 
-} catch (Exception $e) {
-    error_log("Error in upTo_shipping_api.php: " . $e->getMessage());
+} catch (Throwable $e) {
+    error_log("Error in upTo_shipping_api.php: " . $e->getMessage() 
+        . " | File: " . $e->getFile() 
+        . " | Line: " . $e->getLine());
+
     http_response_code(400);
     echo json_encode([
         'success' => false,
-        'message' => $e->getMessage()
+        'message' => $e->getMessage() !== '' 
+            ? $e->getMessage() 
+            : 'Erreur inconnue (' . get_class($e) . ' à la ligne ' . $e->getLine() . ')'
     ]);
 }
 
+endif; // !defined('SHIPPING_DISPATCHER_INCLUDED')
 /**
  * Check if package exists in OzoneExpress
- */
+*/
 function checkOzoneExpressPackageExists($apiUrl, $trackingNumber) {
     $url = $apiUrl.'/parcel-info';
     
@@ -376,7 +378,7 @@ function getForceLogCityId($apiKey, $city_name) {
 
 /**
  * Get ForceLog city CODE by name
- */
+*/
 function getForceLogCityCode($apiKey, $city_name) {
     $cities = getForceLogCities($apiKey);
     
@@ -435,7 +437,7 @@ function getForceLogCityCode($apiKey, $city_name) {
 
 /**
  * Check ForceLog API health
- */
+*/
 function checkForceLogHealth($apiKey) {
     $url = 'https://api.forcelog.ma/health/';
     
@@ -474,6 +476,8 @@ function handleShippingCompanyNotification($db, $order, $new_status, $user_id) {
             sc.api_url,
             sc.api_key,
             sc.api_secret,
+            sc.auth_email,
+            sc.auth_password,
             sc.supports_tracking,
             sc.is_active
         FROM shipping_settings ss
@@ -482,7 +486,7 @@ function handleShippingCompanyNotification($db, $order, $new_status, $user_id) {
         ORDER BY ss.priority ASC
         LIMIT 1
     ", [$user_id]);
-    
+
     if (empty($shipping_info)) {
         return $result;
     }
@@ -1087,6 +1091,484 @@ function handleShippingCompanyNotification($db, $order, $new_status, $user_id) {
                 error_log("Power Delivery API Error - Code: $http_code, Message: " . $error_msg);
                 error_log("Full Response: " . $response);
             }
+
+        } elseif ($company_name === 'quicklivraison' || $company_name === 'quick_livraison' || $company_name === 'quick') {
+       
+            // First check if order already has a tracking number
+            if (!empty($order['tracking_number'])) {
+                $duplicate_check = checkQuickLivraisonPackageExists(
+                    $shipping_company['api_key'],
+                    $order['tracking_number']
+                );
+                
+                if ($duplicate_check['exists']) {
+                    $result['notification_sent'] = false;
+                    $result['company_name'] = $shipping_company['company_name'];
+                    $result['message'] = 'Colis déjà envoyé à QuickLivraison avec le numéro: ' . $order['tracking_number'];
+                    $result['tracking_number'] = $order['tracking_number'];
+                    $result['duplicate_found'] = true;
+                    return $result;
+                }
+            }
+            
+            // Validate required fields for QuickLivraison
+            $missing_fields = [];
+            $validation_errors = [];
+            
+            // Check required fields
+            if (empty(trim($order['customer_name'] ?? ''))) {
+                $missing_fields[] = 'Nom du destinataire (name)';
+            }
+            
+            if (empty(trim($order['customer_phone'] ?? ''))) {
+                $missing_fields[] = 'Téléphone du destinataire (phone)';
+            } else {
+                $phone = formatQuickLivraisonPhone($order['customer_phone']);
+                if (strlen($phone) !== 9) {
+                    $validation_errors[] = 'Numéro de téléphone invalide (doit être 9 chiffres)';
+                }
+            }
+            
+            if (empty(trim($order['shipping_address'] ?? ''))) {
+                $missing_fields[] = 'Adresse complète (address)';
+            }
+            
+            // Validate total amount
+            if (empty($order['total_amount']) || !is_numeric($order['total_amount']) || floatval($order['total_amount']) < 0) {
+                $validation_errors[] = 'Montant total invalide';
+            }
+            
+            // Get district ID from city name
+            $city_name = getCityNameFromBillingAddress($order ?? '');
+            $district_id = getQuickLivraisonDistrictId($city_name);
+            
+            if (empty($district_id)) {
+                $missing_fields[] = 'ID du district (district_id) - Ville "' . $city_name . '" non trouvée';
+                error_log("QuickLivraison - District ID not found for city: " . $city_name);
+            }
+            
+            // If there are missing required fields, return error
+            if (!empty($missing_fields) || !empty($validation_errors)) {
+                $result['notification_sent'] = false;
+                $result['company_name'] = $shipping_company['company_name'];
+                $result['message'] = 'Erreurs de validation: ' . 
+                    implode(', ', $missing_fields) . 
+                    (!empty($validation_errors) ? ' | ' . implode(', ', $validation_errors) : '');
+                $result['missing_fields'] = $missing_fields;
+                $result['validation_errors'] = $validation_errors;
+                return $result;
+            }
+            
+            // Format phone number
+            $phone = formatQuickLivraisonPhone($order['customer_phone']);
+            
+            // Get order items
+            $items = getOrderItems($db, $order['id']);
+            
+            // Generate unique code if needed (QuickLivraison will generate if omitted)
+            $custom_code = null;
+            if (!empty($order['order_number'])) {
+                $custom_code = 'OBG' . preg_replace('/[^a-zA-Z0-9]/', '', $order['order_number']);
+                $custom_code = substr($custom_code, 0, 50);
+            }
+            
+            // Prepare payload for QuickLivraison
+            $payload = [
+                'api_key' => $shipping_company['api_key'],
+                'district_id' => $district_id,
+                'name' => substr(trim($order['customer_name']), 0, 100),
+                'amount' => floatval($order['total_amount']),
+                'phone' => $phone,
+                'address' => substr(trim($order['shipping_address']), 0, 255),
+                'note' => substr($order['shipping_method'] ?? 'Commande e-commerce', 0, 255),
+                'open' => true,  // Allow opening by default
+                'try' => true    // Allow multiple delivery attempts
+            ];
+            
+            // Add custom code if provided
+            if (!empty($custom_code)) {
+                $payload['code'] = $custom_code;
+            }
+            
+            // Add product details if items exist (non-stock mode)
+            if (!empty($items)) {
+                $first_item = $items[0];
+                $payload['prd_name'] = substr($first_item['name'] ?? 'Produit', 0, 100);
+                $payload['qte_prd'] = $first_item['quantity'] ?? 1;
+            } else {
+                $payload['prd_name'] = 'Commande client';
+                $payload['qte_prd'] = 1;
+            }
+            
+            // Log the payload for debugging (without API key)
+            $debug_payload = $payload;
+            unset($debug_payload['api_key']);
+            error_log("QuickLivraison Payload: " . json_encode($debug_payload, JSON_UNESCAPED_UNICODE));
+            
+            $url = 'https://clients.quicklivraison.ma/api/deliveries/store';
+            
+            // Build query string (since API expects form data, not JSON)
+            $postData = http_build_query($payload);
+            
+            $ch = curl_init($url);
+            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+            curl_setopt($ch, CURLOPT_POST, true);
+            curl_setopt($ch, CURLOPT_POSTFIELDS, $postData);
+            curl_setopt($ch, CURLOPT_HTTPHEADER, [
+                'Content-Type: application/x-www-form-urlencoded',
+                'Accept: application/json'
+            ]);
+            curl_setopt($ch, CURLOPT_TIMEOUT, 30);
+            curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+            curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
+            
+            // Enable verbose for debugging
+            curl_setopt($ch, CURLOPT_VERBOSE, true);
+            $verbose = fopen('php://temp', 'w+');
+            curl_setopt($ch, CURLOPT_STDERR, $verbose);
+            
+            $response = curl_exec($ch);
+            $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            $curl_error = curl_error($ch);
+            
+            // Get verbose output
+            rewind($verbose);
+            $verbose_log = stream_get_contents($verbose);
+            fclose($verbose);
+            
+            curl_close($ch);
+            
+            // Log the response
+            error_log("QuickLivraison Request URL: $url");
+            error_log("QuickLivraison Response - HTTP Code: $http_code");
+            error_log("QuickLivraison Response Body: " . $response);
+            
+            // Handle cURL errors
+            if ($response === false) {
+                $result['message'] = 'Erreur de connexion à QuickLivraison: ' . $curl_error;
+                error_log("QuickLivraison cURL Error: " . $curl_error);
+                return $result;
+            }
+            
+            $response_data = json_decode($response, true);
+            
+            // Check for success response
+            if ($http_code === 200 && isset($response_data['success']) && isset($response_data['tracking_number'])) {
+                $tracking_number = $response_data['tracking_number'];
+                
+                // Update the order with the new tracking number
+                $db->update('orders', $order['id'], [
+                    'tracking_number' => $tracking_number,
+                    'shipping_company_id' => $shipping_company['shipping_company_id'],
+                    'shipping_status' => 'processing',
+                    'updated_at' => date('Y-m-d H:i:s')
+                ]);
+                
+                $result['notification_sent'] = true;
+                $result['company_name'] = $shipping_company['company_name'];
+                $result['message'] = $response_data['success'] ?? 'Commande envoyée à QuickLivraison avec succès';
+                $result['tracking_number'] = $tracking_number;
+                
+            } else {
+                // Error handling
+                $error_msg = 'Erreur inconnue de l\'API';
+                
+                if (isset($response_data['error'])) {
+                    $error_msg = $response_data['error'];
+                } elseif (isset($response_data['message'])) {
+                    $error_msg = $response_data['message'];
+                }
+                
+                // HTTP status specific messages
+                if ($http_code === 400) {
+                    $error_msg = 'Requête invalide - Vérifiez les paramètres: ' . $error_msg;
+                } elseif ($http_code === 401) {
+                    $error_msg = 'Clé API invalide ou non autorisée';
+                } elseif ($http_code === 403) {
+                    $error_msg = 'Accès refusé - Vérifiez vos permissions API';
+                } elseif ($http_code === 404) {
+                    $error_msg = 'Endpoint non trouvé';
+                } elseif ($http_code === 422) {
+                    $error_msg = 'Données de validation échouées: ' . $error_msg;
+                } elseif ($http_code === 500) {
+                    $error_msg = 'Erreur interne du serveur QuickLivraison';
+                }
+                
+                $result['message'] = 'Erreur QuickLivraison: ' . $error_msg;
+                $result['api_response'] = $response_data;
+                $result['http_code'] = $http_code;
+                
+                error_log("QuickLivraison API Error - Code: $http_code, Message: " . $error_msg);
+            }
+        
+        } elseif ($company_name === 'infinidis' || $company_name === 'infinidis.ma') {
+    
+            // Check if order already has a tracking number
+            if (!empty($order['tracking_number'])) {
+                $duplicate_check = checkInfinidisPackageExists(
+                    $shipping_company['api_key'],
+                    $order['tracking_number']
+                );
+                
+                if ($duplicate_check['exists']) {
+                    $result['notification_sent'] = false;
+                    $result['company_name'] = $shipping_company['company_name'];
+                    $result['message'] = 'Colis déjà envoyé à INFINIDIS avec le numéro: ' . $order['tracking_number'];
+                    $result['tracking_number'] = $order['tracking_number'];
+                    $result['duplicate_found'] = true;
+                    return $result;
+                }
+            }
+            
+            // Validate required fields for INFINIDIS
+            $missing_fields = [];
+            $validation_errors = [];
+            
+            // Check required fields based on your documentation
+            if (empty(trim($order['customer_name'] ?? ''))) {
+                $missing_fields[] = 'Nom complet du client (fullname)';
+            }
+            
+            if (empty(trim($order['customer_email'] ?? ''))) {
+                $missing_fields[] = 'Email du client (email)';
+            } elseif (!filter_var($order['customer_email'], FILTER_VALIDATE_EMAIL)) {
+                $validation_errors[] = 'Email invalide';
+            }
+            
+            if (empty(trim($order['customer_phone'] ?? ''))) {
+                $missing_fields[] = 'Téléphone (phone)';
+            }
+            
+            if (empty(trim($order['shipping_address'] ?? ''))) {
+                $missing_fields[] = 'Adresse (address)';
+            }
+            
+            if (empty(trim($order['customer_ville'] ?? ''))) {
+                $missing_fields[] = 'Ville (city)';
+            }
+            
+            if (empty($order['total_amount']) || !is_numeric($order['total_amount'])) {
+                $validation_errors[] = 'Prix invalide (price)';
+            }
+            
+            // If there are missing required fields, return error
+            if (!empty($missing_fields) || !empty($validation_errors)) {
+                $result['notification_sent'] = false;
+                $result['company_name'] = $shipping_company['company_name'];
+                $result['message'] = 'Erreurs de validation: ' . 
+                    implode(', ', $missing_fields) . 
+                    (!empty($validation_errors) ? ' | ' . implode(', ', $validation_errors) : '');
+                $result['missing_fields'] = $missing_fields;
+                $result['validation_errors'] = $validation_errors;
+                return $result;
+            }
+            
+            // Get order items for product info
+            $items = getOrderItems($db, $order['id']);
+            
+            // Generate a unique order code if needed
+            $order_code = !empty($order['order_number']) ? $order['order_number'] : 'CMD_' . $order['id'];
+            
+            // Prepare payload for INFINIDIS
+            $payload = [
+                'fullname' => substr(trim($order['customer_name']), 0, 100),
+                'email' => 'OBGecom@infinidis.ma',
+                'code' => $order_code,
+                'product' => !empty($items) ? substr($items[0]['name'] ?? 'Produit', 0, 100) : 'Commande',
+                'qty' => !empty($items) ? array_sum(array_column($items, 'quantity')) : 1,
+                'phone' => formatInfinidisPhone($order['customer_phone']),
+                'address' => substr(trim($order['shipping_address']), 0, 255),
+                'city' => substr(trim($order['customer_ville']), 0, 100),
+                'price' => floatval($order['total_amount']),
+                'note' => substr($order['shipping_method'] ?? 'Commande e-commerce', 0, 255)
+            ];
+            
+            // Log the payload for debugging
+            error_log("INFINIDIS Payload: " . json_encode($payload, JSON_UNESCAPED_UNICODE));
+            
+            // Determine the correct endpoint (try both formats)
+            $base_url = rtrim($shipping_company['api_url'], '/');
+            $endpoints_to_try = [
+                $base_url . '/sendtoinfinidis.php',
+                $base_url . '/api/sendtoinfinidis.php',
+                $base_url
+            ];
+            
+            $response_data = null;
+            $http_code = null;
+            $success = false;
+            
+            foreach ($endpoints_to_try as $url) {
+                $ch = curl_init($url);
+                curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+                curl_setopt($ch, CURLOPT_POST, true);
+                curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($payload));
+                curl_setopt($ch, CURLOPT_HTTPHEADER, [
+                    'Authorization: Bearer ' . $shipping_company['api_key'],
+                    'Content-Type: application/x-www-form-urlencoded',
+                    'Accept: application/json'
+                ]);
+                curl_setopt($ch, CURLOPT_TIMEOUT, 30);
+                curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+                
+                $response = curl_exec($ch);
+                $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+                $curl_error = curl_error($ch);
+                curl_close($ch);
+                
+                error_log("INFINIDIS Attempt URL: $url - HTTP Code: $http_code");
+                error_log("INFINIDIS Response: " . $response);
+                
+                if ($http_code === 200) {
+                    $response_data = json_decode($response, true);
+                    if (isset($response_data['success']) && $response_data['success'] === true) {
+                        $success = true;
+                        break;
+                    }
+                }
+            }
+            
+            if ($success && $response_data) {
+                // Extract tracking number from response
+                $tracking_number = $response_data['code'] ?? $order_code;
+                
+                // Update the order with tracking number
+                $db->update('orders', $order['id'], [
+                    'tracking_number' => $tracking_number,
+                    'shipping_company_id' => $shipping_company['shipping_company_id'],
+                    'shipping_status' => 'processing',
+                    'updated_at' => date('Y-m-d H:i:s')
+                ]);
+                
+                $result['notification_sent'] = true;
+                $result['company_name'] = $shipping_company['company_name'];
+                $result['message'] = $response_data['message'] ?? 'Commande envoyée à INFINIDIS avec succès';
+                $result['tracking_number'] = $tracking_number;
+                
+            } else {
+                $error_msg = 'Erreur inconnue de l\'API';
+                if ($response_data && isset($response_data['message'])) {
+                    $error_msg = $response_data['message'];
+                } elseif ($http_code === 400) {
+                    $error_msg = 'Requête invalide - Vérifiez les paramètres';
+                } elseif ($http_code === 401) {
+                    $error_msg = 'Clé API invalide ou non autorisée';
+                } elseif ($http_code === 405) {
+                    $error_msg = 'Méthode non autorisée - Utilisez POST ou GET';
+                }
+                
+                $result['message'] = 'Erreur INFINIDIS: ' . $error_msg;
+                $result['api_response'] = $response_data;
+                $result['http_code'] = $http_code;
+            }
+        } elseif ($company_name === 'ortalog') {
+
+            // Ortalog uses JWT auth (email + password), not a static API key
+            if (empty($shipping_company['auth_email']) || empty($shipping_company['auth_password'])) {
+                $result['notification_sent'] = false;
+                $result['company_name'] = $shipping_company['company_name'];
+                $result['message'] = 'Les identifiants Ortalog (email/mot de passe) ne sont pas configurés.';
+                return $result;
+            }
+        
+            // Duplicate check: Ortalog doesn't expose a lookup-by-code endpoint,
+            // but if the order already has a tracking number we consider it sent.
+            if (!empty($order['tracking_number'])) {
+                $result['notification_sent'] = false;
+                $result['company_name'] = $shipping_company['company_name'];
+                $result['message'] = 'Colis déjà envoyé à Ortalog avec le numéro: ' . $order['tracking_number'];
+                $result['tracking_number'] = $order['tracking_number'];
+                $result['duplicate_found'] = true;
+                return $result;
+            }
+        
+            // ---- Validate required fields ----
+            $missing_fields = [];
+            $validation_errors = [];
+        
+            if (empty(trim($order['customer_name'] ?? ''))) {
+                $missing_fields[] = 'Nom du destinataire (receiver)';
+            }
+        
+            if (empty(trim($order['customer_phone'] ?? ''))) {
+                $missing_fields[] = 'Téléphone du destinataire (phone)';
+            }
+        
+            if (empty(trim($order['shipping_address'] ?? ''))) {
+                $missing_fields[] = 'Adresse complète (address)';
+            }
+        
+            if (empty($order['total_amount']) || !is_numeric($order['total_amount'])) {
+                $validation_errors[] = 'Prix invalide (price)';
+            }
+        
+            if (!empty($missing_fields) || !empty($validation_errors)) {
+                $result['notification_sent'] = false;
+                $result['company_name'] = $shipping_company['company_name'];
+                $result['message'] = 'Erreurs de validation: ' .
+                    implode(', ', $missing_fields) .
+                    (!empty($validation_errors) ? ' | ' . implode(', ', $validation_errors) : '');
+                $result['missing_fields'] = $missing_fields;
+                $result['validation_errors'] = $validation_errors;
+                return $result;
+            }
+        
+            // ---- Build Ortalog base URL ----
+            $base_url = rtrim($shipping_company['api_url'], '/');
+            if (strpos($base_url, '/api') === false) {
+                $base_url = $base_url . '/api';
+            }
+        
+            $email    = $shipping_company['auth_email'];
+            $password = $shipping_company['auth_password'];
+        
+            try {
+                // 1. Login → JWT
+                $login_result = loginToOrtalog($base_url, $email, $password);
+                if (!$login_result['success']) {
+                    $result['message'] = 'Erreur de connexion à Ortalog: ' . ($login_result['message'] ?? 'Échec auth');
+                    return $result;
+                }
+                $jwt_token = $login_result['token'];
+
+                // 2. Resolve city ID (fallback to Casablanca if not found)
+                $city_name = getCityNameFromBillingAddress($order ?? '');
+                $city_id   = getOrtalogCityId($base_url, $jwt_token, $city_name ?: 'Casablanca');
+        
+                if (empty($city_id)) {
+                    $city_id = getOrtalogCityId($base_url, $jwt_token, 'Casablanca');
+                    if (empty($city_id)) {
+                        $result['message'] = 'Ville non trouvée dans Ortalog: ' . ($city_name ?: 'inconnue');
+                        return $result;
+                    }
+                }
+        
+                // 3. Create parcel
+                $parcel_result = createOrtalogParcel($db, $base_url, $jwt_token, $order, $city_id);
+        
+                if (!$parcel_result['success']) {
+                    $result['message'] = 'Erreur de création du colis Ortalog: ' . ($parcel_result['message'] ?? 'Échec');
+                    return $result;
+                }
+        
+                // 4. Persist tracking number on the order
+                $tracking_number = $parcel_result['parcel_code'] ?? '';
+                if (!empty($tracking_number)) {
+                    $db->update('orders', $order['id'], [
+                        'tracking_number'     => $tracking_number,
+                        'shipping_company_id' => $shipping_company['shipping_company_id'],
+                    ]);
+                }
+        
+                $result['notification_sent'] = true;
+                $result['company_name']      = $shipping_company['company_name'];
+                $result['message']           = $parcel_result['message'] ?? 'Commande envoyée à Ortalog avec succès';
+                $result['tracking_number']   = $tracking_number;
+        
+            } catch (Exception $e) {
+                error_log("Ortalog shipping error: " . $e->getMessage());
+                $result['message'] = 'Erreur Ortalog: ' . $e->getMessage();
+            }
         } else {
             // Future support for other companies
             $result['message'] = "Support pour la compagnie {$shipping_company['company_name']} non encore implémenté.";
@@ -1101,8 +1583,37 @@ function handleShippingCompanyNotification($db, $order, $new_status, $user_id) {
 }
 
 /**
- * Get Power Delivery city ID by name
- */
+ * Check if package exists in INFINIDIS
+*/
+function checkInfinidisPackageExists($apiKey, $trackingNumber) {
+    // INFINIDIS might not have a tracking endpoint yet
+    // For now, return false to allow sending
+    return ['exists' => false, 'message' => 'Duplicate check not available for INFINIDIS'];
+}
+
+/**
+ * Format phone number for INFINIDIS
+*/
+function formatInfinidisPhone($phone) {
+    // Remove all non-digit characters
+    $phone = preg_replace('/[^0-9]/', '', $phone);
+    
+    // Moroccan numbers: if it starts with 212, convert to 0
+    if (substr($phone, 0, 3) === '212') {
+        $phone = '0' . substr($phone, 3);
+    }
+    
+    // Ensure it starts with 0 for Moroccan numbers
+    if (strlen($phone) === 9 && substr($phone, 0, 1) !== '0') {
+        $phone = '0' . $phone;
+    }
+    
+    return $phone;
+}
+
+/**
+ * Get Power Delivery city ID by name */
+
 function getPowerDeliveryCityId($apiKey, $city_name) {
     $cities = getPowerDeliveryCities($apiKey);
     
@@ -1157,7 +1668,7 @@ function getPowerDeliveryCityId($apiKey, $city_name) {
 
 /**
  * Generate unique parcel code for Power Delivery
- */
+*/
 function generateUniqueParcelCode($order) {
     $timestamp = time();
     $order_id = $order['id'] ?? '000';
@@ -1381,7 +1892,7 @@ function formatPhoneNumber($phone) {
 
 /**
  * Remove accents from string
- */
+*/
 function removeAccents($string) {
     $string = htmlentities($string, ENT_NOQUOTES, 'UTF-8');
     $string = preg_replace('#&([A-za-z])(?:acute|cedil|caron|circ|grave|orn|ring|slash|th|tilde|uml);#', '\1', $string);
@@ -1408,7 +1919,7 @@ function cleanApiBaseUrl($url) {
 
 /**
  * Standalone function to check duplicates for any shipping company
- */
+*/
 function checkShippingDuplicate($shippingCompany, $credentials, $trackingNumber) {
     switch (strtolower($shippingCompany)) {
         case 'ozonexpress':
@@ -1518,8 +2029,518 @@ function getCityNameFromBillingAddress($order) {
 }
 
 /**
+ * QuickLivraison Integration Functions
+*/
+
+/**
+ * Get QuickLivraison cities list
+*/
+function getQuickLivraisonCities() {
+    $url = 'https://clients.quicklivraison.ma/api/cities/frais-delay';
+    
+    $ch = curl_init($url);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 30);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, [
+        'Accept: application/json'
+    ]);
+    
+    $response = curl_exec($ch);
+    $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $curl_error = curl_error($ch);
+    curl_close($ch);
+    
+    if ($curl_error || $http_code !== 200) {
+        error_log("QuickLivraison Cities API Error: $curl_error (HTTP: $http_code)");
+        return [];
+    }
+    
+    $data = json_decode($response, true);
+    
+    if (!is_array($data)) {
+        error_log("QuickLivraison Cities API: Invalid response format - not an array");
+        return [];
+    }
+    
+    // The cities are inside a "cities" key
+    if (isset($data['cities']) && is_array($data['cities'])) {
+        error_log("QuickLivraison Cities API: Retrieved " . count($data['cities']) . " cities");
+        return $data['cities'];
+    }
+    
+    // Fallback: if no 'cities' key, return the data as-is
+    error_log("QuickLivraison Cities API: No 'cities' key found, returning raw data");
+    return $data;
+}
+
+
+/**
+ * Get QuickLivraison district ID by city name
+*/
+function getQuickLivraisonDistrictId($city_name) {
+    $cities = getQuickLivraisonCities();
+    
+    if (empty($cities)) {
+        error_log("QuickLivraison - No cities returned from API");
+        return null;
+    }
+    
+    $city_name = strtolower(trim($city_name));
+    error_log("QuickLivraison - Looking for city: '$city_name'");
+    
+    // Direct mapping for common Moroccan cities (fallback if API fails)
+    $direct_mappings = [
+        'ouarzazate' => 1316,
+        'warzazate' => 1316,
+        'ourzazate' => 1316,
+        'casablanca' => 43,
+        'marrakech' => 49,
+        'rabat' => 55,
+        'tanger' => 103,
+        'fes' => 577,
+        'agadir' => 37,
+        'meknes' => 547,
+        'kenitra' => 1604,
+        'tetouan' => 133,
+        'safi' => 427,
+        'el jadida' => 469,
+        'nador' => 97,
+        'settat' => 680,
+        'khouribga' => 1094,
+        'beni mellal' => 313,
+        'laayoune' => 307,
+        'dakhla' => 716,
+    ];
+    
+    // First check direct mapping
+    $search_name = strtolower(trim($city_name));
+    if (isset($direct_mappings[$search_name])) {
+        error_log("QuickLivraison - Direct mapping found for: $city_name -> ID: " . $direct_mappings[$search_name]);
+        return $direct_mappings[$search_name];
+    }
+    
+    // Search through API cities
+    foreach ($cities as $city) {
+        if (!is_array($city)) {
+            continue;
+        }
+        
+        // Get city name and ID from the correct keys
+        $city_ref = '';
+        $city_id = null;
+        
+        // The API uses 'city_name' and 'city_id'
+        if (isset($city['city_name'])) {
+            $city_ref = strtolower(trim($city['city_name']));
+        } elseif (isset($city['name'])) {
+            $city_ref = strtolower(trim($city['name']));
+        } else {
+            continue;
+        }
+        
+        if (isset($city['city_id'])) {
+            $city_id = $city['city_id'];
+        } elseif (isset($city['id'])) {
+            $city_id = $city['id'];
+        } else {
+            continue;
+        }
+        
+        // Exact match
+        if ($city_ref === $search_name) {
+            error_log("QuickLivraison - Exact match found: '$city_ref' (ID: $city_id)");
+            return $city_id;
+        }
+        
+        // Case-insensitive exact match
+        if ($city_ref === $search_name) {
+            error_log("QuickLivraison - Case-insensitive match found: '$city_ref' (ID: $city_id)");
+            return $city_id;
+        }
+    }
+    
+    // If still not found, try partial matching
+    foreach ($cities as $city) {
+        if (!is_array($city)) {
+            continue;
+        }
+        
+        $city_ref = '';
+        $city_id = null;
+        
+        if (isset($city['city_name'])) {
+            $city_ref = strtolower(trim($city['city_name']));
+        } elseif (isset($city['name'])) {
+            $city_ref = strtolower(trim($city['name']));
+        } else {
+            continue;
+        }
+        
+        if (isset($city['city_id'])) {
+            $city_id = $city['city_id'];
+        } elseif (isset($city['id'])) {
+            $city_id = $city['id'];
+        } else {
+            continue;
+        }
+        
+        // Contains match
+        if (strpos($city_ref, $search_name) !== false || strpos($search_name, $city_ref) !== false) {
+            if (strlen($search_name) >= 3) {
+                error_log("QuickLivraison - Contains match: '$search_name' in '$city_ref' (ID: $city_id)");
+                return $city_id;
+            }
+        }
+        
+        // Remove accents for better matching
+        $clean_search = removeAccents($search_name);
+        $clean_city = removeAccents($city_ref);
+        
+        if ($clean_city === $clean_search) {
+            error_log("QuickLivraison - Accent-free match: '$clean_search' (ID: $city_id)");
+            return $city_id;
+        }
+    }
+    
+    error_log("QuickLivraison - No match found for city: '$city_name'");
+    
+    // Log first 20 cities for debugging
+    $sample_cities = [];
+    foreach (array_slice($cities, 0, 20) as $city) {
+        if (is_array($city)) {
+            $name = $city['city_name'] ?? $city['name'] ?? 'unknown';
+            $id = $city['city_id'] ?? $city['id'] ?? '?';
+            $sample_cities[] = "$name (ID: $id)";
+        }
+    }
+    error_log("QuickLivraison - Available cities sample: " . implode(', ', $sample_cities));
+    
+    return null;
+}
+/**
+ * Check if package exists in QuickLivraison
+*/
+function checkQuickLivraisonPackageExists($apiKey, $trackingNumber) {
+    $url = 'https://clients.quicklivraison.ma/api/getParcelDetails/' . urlencode($trackingNumber);
+    
+    $ch = curl_init($url);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 30);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+    
+    $response = curl_exec($ch);
+    $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+    
+    if ($http_code === 200) {
+        $response_data = json_decode($response, true);
+        
+        if (isset($response_data['tracking_number']) && !empty($response_data['tracking_number'])) {
+            return [
+                'exists' => true,
+                'package_info' => $response_data
+            ];
+        }
+    }
+    
+    return [
+        'exists' => false,
+        'error' => $response ?? null
+    ];
+}
+
+/**
+ * Format phone number for QuickLivraison (9 digits, no spaces)
+*/
+
+function formatQuickLivraisonPhone($phone) {
+    // Remove all non-digit characters
+    $phone = preg_replace('/[^0-9]/', '', $phone);
+    
+    // Moroccan numbers: if it starts with 212, convert to 0
+    if (substr($phone, 0, 3) === '212') {
+        $phone = '0' . substr($phone, 3);
+    }
+    
+    // If it's 10 digits starting with 0, take last 9 digits
+    if (strlen($phone) === 10 && substr($phone, 0, 1) === '0') {
+        $phone = substr($phone, 1);
+    }
+    
+    // If it's 9 digits, it's good
+    if (strlen($phone) === 9) {
+        return $phone;
+    }
+    
+    // If it's 8 digits, add leading 0? Actually QuickLivraison wants 9 digits without leading 0
+    if (strlen($phone) === 8) {
+        return '6' . $phone;
+    }
+    
+    // Default fallback - take last 9 digits
+    return substr($phone, -9);
+}
+
+/**
+ * Login to Ortalog and return a JWT token
+*/
+function loginToOrtalog($base_url, $email, $password) {
+    $url = $base_url . '/auth/login/client';
+
+    $postData = [
+        'identifiant' => $email,
+        'password'    => $password,
+    ];
+    $jsonData = json_encode($postData);
+
+    $ch = curl_init($url);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_POST, true);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, $jsonData);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, [
+        'Content-Type: application/json',
+        'Accept: application/json',
+        'Content-Length: ' . strlen($jsonData),
+    ]);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 30);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+
+    $response  = curl_exec($ch);
+    $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $curl_err  = curl_error($ch);
+    curl_close($ch);
+
+    error_log("Ortalog login - HTTP: $http_code | Error: " . ($curl_err ?: 'none'));
+
+    if ($response === false) {
+        return ['success' => false, 'message' => 'Erreur de connexion: ' . $curl_err];
+    }
+
+    $data = json_decode($response, true);
+    if (json_last_error() !== JSON_ERROR_NONE) {
+        return ['success' => false, 'message' => 'Réponse invalide: ' . substr((string)$response, 0, 200)];
+    }
+
+    if ($http_code !== 200) {
+        return ['success' => false, 'message' => $data['message'] ?? ('Erreur auth (HTTP ' . $http_code . ')')];
+    }
+
+    if (!isset($data['token'])) {
+        return ['success' => false, 'message' => 'Token JWT non reçu'];
+    }
+
+    return ['success' => true, 'token' => $data['token'], 'user' => $data['user'] ?? null];
+}
+
+/**
+ * Resolve an Ortalog city ID from a city name
+*/
+function getOrtalogCityId($base_url, $jwt_token, $city_name) {
+    $url = $base_url . '/parcels/client/new';
+
+    $ch = curl_init($url);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, [
+        'Authorization: Bearer ' . $jwt_token,
+        'Accept: application/json',
+    ]);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 30);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+
+    $response  = curl_exec($ch);
+    $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    if ($http_code !== 200 || empty($response)) {
+        error_log("Ortalog cities - HTTP: $http_code");
+        return null;
+    }
+
+    $data = json_decode($response, true);
+    if (!isset($data['cities']) || !is_array($data['cities'])) {
+        return null;
+    }
+
+    $city_name      = strtolower(trim($city_name));
+    $best_match_id  = null;
+    $best_similarity = 0;
+
+    foreach ($data['cities'] as $city) {
+        if (!isset($city['label'], $city['id'])) continue;
+
+        $city_ref = strtolower(trim($city['label']));
+
+        // Exact match
+        if ($city_ref === $city_name) return $city['id'];
+
+        // Contains match
+        if (strpos($city_ref, $city_name) !== false || strpos($city_name, $city_ref) !== false) {
+            if (strlen($city_name) >= 3) return $city['id'];
+        }
+
+        // Levenshtein fallback
+        $distance   = levenshtein($city_name, $city_ref);
+        $max_length = max(strlen($city_name), strlen($city_ref));
+        if ($max_length > 0) {
+            $similarity = (($max_length - $distance) / $max_length) * 100;
+            if ($similarity > $best_similarity && $similarity >= 40) {
+                $best_similarity = $similarity;
+                $best_match_id   = $city['id'];
+            }
+        }
+    }
+
+    return $best_match_id;
+}
+
+/**
+ * Fetch the list of products available in Ortalog's client stock
+*/
+function getOrtalogStockProducts($base_url, $jwt_token) {
+    $url = $base_url . '/stock/client/produits';
+
+    $ch = curl_init($url);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, [
+        'Authorization: Bearer ' . $jwt_token,
+        'Accept: application/json',
+    ]);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 30);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+
+    $response  = curl_exec($ch);
+    $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    if ($http_code !== 200) return [];
+    return json_decode($response, true) ?: [];
+}
+
+/**
+ * Create a parcel in Ortalog (from stock) and return its code
+*/
+function createOrtalogParcel($db, $base_url, $jwt_token, $order, $city_id) {
+    $url = $base_url . '/parcels/client';
+
+    $items = getOrderItems($db, $order['id']);
+
+    // ---- Normalize phone → 10 digits starting with 0 ----
+    $phone = preg_replace('/[^0-9]/', '', $order['customer_phone'] ?? '');
+    if (strpos($phone, '00212') === 0) {
+        $phone = substr($phone, 5);
+    } elseif (strpos($phone, '212') === 0) {
+        $phone = substr($phone, 3);
+    }
+    if (strlen($phone) === 9 && $phone[0] !== '0') {
+        $phone = '0' . $phone;
+    } elseif (strlen($phone) === 8) {
+        $phone = '0' . $phone;
+    } elseif (strlen($phone) > 10) {
+        $phone = '0' . substr($phone, -9);
+    } elseif (strlen($phone) < 10) {
+        $phone = '0' . substr($phone, -9);
+    }
+
+    // ---- Match order items against Ortalog stock products ----
+    $stock_products = getOrtalogStockProducts($base_url, $jwt_token);
+    $products       = [];
+
+    foreach ($items as $item) {
+        $name  = trim((string)$item['name']);
+        $match = null;
+        $best_similarity = 0;
+
+        foreach ($stock_products as $sp) {
+            if ((int)$sp['active'] !== 1) continue;
+
+            $sp_name = trim((string)$sp['nom']);
+            if (strcasecmp($sp_name, $name) === 0) {
+                $match = $sp;
+                break;
+            }
+            similar_text(mb_strtolower($sp_name), mb_strtolower($name), $percent);
+            if ($percent > $best_similarity && $percent >= 70) {
+                $best_similarity = $percent;
+                $match = $sp;
+            }
+        }
+
+        if (!$match) {
+            return ['success' => false, 'message' => "Produit introuvable en stock Ortalog: " . $name];
+        }
+        if ((int)$match['stock'] < (int)$item['quantity']) {
+            return ['success' => false, 'message' => "Stock insuffisant pour: " . $item['name']];
+        }
+
+        $products[] = ['id' => $match['id'], 'qty' => (int)$item['quantity']];
+    }
+
+    // ---- Build unique parcel code ----
+    $parcel_code = 'TM' . strtoupper(uniqid()) . str_pad($order['id'], 5, '0', STR_PAD_LEFT);
+
+    $payload = [
+        'receiver'  => substr(trim($order['customer_name']), 0, 250),
+        'phone'     => $phone,
+        'city'      => $city_id,
+        'address'   => substr(trim($order['shipping_address']), 0, 2000),
+        'price'     => floatval($order['total_amount']),
+        'code'      => $parcel_code,
+        'note'      => substr($order['shipping_method'] ?? $order['order_note'] ?? 'Commande e-commerce', 0, 2000),
+        'open'      => 1,
+        'essayage'  => 0,
+        'replace'   => 0,
+        'fromStock' => 1,
+        'products'  => $products,
+    ];
+
+    $jsonData = json_encode($payload);
+
+    $ch = curl_init($url);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_POST, true);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, $jsonData);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, [
+        'Authorization: Bearer ' . $jwt_token,
+        'Content-Type: application/json',
+        'Accept: application/json',
+        'Content-Length: ' . strlen($jsonData),
+    ]);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 30);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+
+    $response  = curl_exec($ch);
+    $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $curl_err  = curl_error($ch);
+    curl_close($ch);
+
+    error_log("Ortalog parcel - HTTP: $http_code | Response: " . substr((string)$response, 0, 500));
+
+    if ($response === false) {
+        return ['success' => false, 'message' => 'Erreur de connexion: ' . $curl_err];
+    }
+
+    $data = json_decode($response, true);
+    if (json_last_error() !== JSON_ERROR_NONE) {
+        return ['success' => false, 'message' => 'Réponse invalide du serveur Ortalog'];
+    }
+
+    if ($http_code === 201 || $http_code === 200) {
+        return [
+            'success'     => true,
+            'message'     => 'Colis créé avec succès',
+            'parcel_id'   => $data['parcel_id'] ?? null,
+            'parcel_code' => $data['parcel_code'] ?? $parcel_code,
+        ];
+    }
+
+    $error_msg = $data['message'] ?? ('Erreur de création du colis (HTTP ' . $http_code . ')');
+    return ['success' => false, 'message' => $error_msg];
+}
+
+/**
  * Get order items for shipping
- */
+*/
 function getOrderItems($db, $order_id) {
     $items = $db->getThisQuery("
         SELECT 
@@ -1536,7 +2557,7 @@ function getOrderItems($db, $order_id) {
 
 /**
  * Get current user ID from session
- */
+*/
 function getCurrentUserId($db) {
     if (!isset($_SESSION['user']) || empty($_SESSION['user']['username'])) {
         return null;

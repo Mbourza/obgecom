@@ -95,7 +95,7 @@ class Subscription {
                     'type' => 'warning',
                     'title' => 'Abonnement requis',
                     'message' => 'Vous n\'avez pas d\'abonnement actif. Veuillez souscrire à un plan pour continuer à utiliser nos services.',
-                    'action_url' => '../plans.php',
+                    'action_url' => './subscription',
                     'action_text' => 'Choisir un plan',
                     'priority' => 'high'
                 ];
@@ -106,7 +106,7 @@ class Subscription {
                     'type' => 'danger',
                     'title' => 'Abonnement expiré',
                     'message' => "Votre abonnement {$status['plan_name']} a expiré il y a {$status['days_expired']} jours.",
-                    'action_url' => '../plans.php',
+                    'action_url' => './subscription',
                     'action_text' => 'Renouveler',
                     'priority' => 'high'
                 ];
@@ -118,7 +118,7 @@ class Subscription {
                         'type' => 'warning',
                         'title' => 'Abonnement bientôt expiré',
                         'message' => "Votre abonnement {$status['plan_name']} expire dans {$status['days_remaining']} jours.",
-                        'action_url' => '../plans.php',
+                        'action_url' => './subscription',
                         'action_text' => 'Renouveler maintenant',
                         'priority' => 'medium'
                     ];

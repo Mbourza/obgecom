@@ -109,7 +109,7 @@ try {
             'shipping_cost' => $data['shipping_cost'] ?? 0,
             'total_amount' => $data['total'],
             'currency' => isset($data['currency']) ? $data['currency'] : 'MAD',
-            'status' => 'pending',
+            'status' => 'new-order',
             'shipping_status' => 'pending',
             'payment_status' => 'pending',
             'shipping_method' => isset($data['shipping_method']) ? $data['shipping_method'] : '',
@@ -118,7 +118,9 @@ try {
             'length' => isset($data['dimensions']['length']) ? $data['dimensions']['length'] : 0,
             'width' => isset($data['dimensions']['width']) ? $data['dimensions']['width'] : 0,
             'height' => isset($data['dimensions']['height']) ? $data['dimensions']['height'] : 0,
-            'order_date' => isset($data['created_at']) ? $data['created_at'] : date('Y-m-d H:i:s'),
+            'order_date' => isset($data['created_at'])
+                ? date('Y-m-d H:i:s', strtotime($data['created_at']))
+                : date('Y-m-d H:i:s'),
             'platform' => 'manual',
             'created_at' => date('Y-m-d H:i:s'),
             'updated_at' => date('Y-m-d H:i:s'),
@@ -134,7 +136,7 @@ try {
         
         // Insert order
         $order_result = $db->insert('orders', $order_data);
-        
+
         if (!$order_result) {
             throw new Exception('Erreur lors de la création de la commande');
         }

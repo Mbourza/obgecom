@@ -49,22 +49,39 @@ try {
 
     $agentId = intval($agentId);
 
-    // Build the base query
+    // Build the enhanced query with LEFT JOINs for responsable and team
     $agentQuery = "SELECT 
-                        id,
-                        name,
-                        email,
-                        phone,
-                        is_active,
-                        created_at,
-                        updated_at";
+                        a.id,
+                        a.name,
+                        a.email,
+                        a.phone,
+                        a.is_active,
+                        a.created_at,
+                        a.updated_at,
+                        a.service_fee,
+                        a.confirmation_rate,
+                        a.score,
+                        a.total_payed,
+                        a.total_earned,
+                        a.team_id,
+                        a.responsable_id,
+                        -- Get responsable details
+                        r.name as responsable_name,
+                        r.phone as responsable_phone,
+                        r.email as responsable_email,
+                        -- Get team details
+                        t.name as team_name,
+                        t.description as team_description";
     
     // Include password only if explicitly requested
     if ($includePassword) {
-        $agentQuery .= ", password";
+        $agentQuery .= ", a.password";
     }
     
-    $agentQuery .= " FROM agents WHERE id = ?";
+    $agentQuery .= " FROM agents a
+                    LEFT JOIN responsables r ON a.responsable_id = r.id
+                    LEFT JOIN teams t ON a.team_id = t.id
+                    WHERE a.id = ?";
     
     $agentResult = $db->getThisQuery($agentQuery, [$agentId]);
     
@@ -83,11 +100,23 @@ try {
     // Get performance statistics from agent_confirmations
     $statsQuery = "SELECT 
                         COUNT(*) as total_orders,
-                        SUM(CASE WHEN status = 1 THEN 1 ELSE 0 END) as confirmed_orders,
-                        SUM(CASE WHEN status = 0 THEN 1 ELSE 0 END) as pending_orders,
-                        SUM(CASE WHEN status = 2 THEN 1 ELSE 0 END) as canceled_orders,
-                        COALESCE(SUM(CASE WHEN status = 1 THEN amount ELSE 0 END), 0) as confirmed_amount,
-                        COALESCE(SUM(amount), 0) as total_amount
+                        SUM(CASE WHEN status = 'confirmed' THEN 1 ELSE 0 END) as confirmed_orders,
+                        SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending_orders,
+                        SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) as canceled_orders,
+                        COALESCE(SUM(CASE WHEN status = 'confirmed' THEN amount ELSE 0 END), 0) as confirmed_amount,
+                        COALESCE(SUM(amount), 0) as total_amount,
+                        -- Monthly statistics
+                        COUNT(CASE WHEN MONTH(created_at) = MONTH(CURRENT_DATE()) 
+                                   AND YEAR(created_at) = YEAR(CURRENT_DATE()) 
+                                   THEN 1 END) as monthly_orders,
+                        COALESCE(SUM(CASE WHEN MONTH(created_at) = MONTH(CURRENT_DATE()) 
+                                          AND YEAR(created_at) = YEAR(CURRENT_DATE()) 
+                                          AND status = 'confirmed' THEN amount ELSE 0 END), 0) as monthly_amount,
+                        -- Last 30 days statistics
+                        COUNT(CASE WHEN created_at >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY) 
+                                   THEN 1 END) as last_30_days_orders,
+                        COALESCE(SUM(CASE WHEN created_at >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY) 
+                                          AND status = 'confirmed' THEN amount ELSE 0 END), 0) as last_30_days_amount
                     FROM agent_confirmations 
                     WHERE agent_id = ?";
     
@@ -98,7 +127,11 @@ try {
         'pending_orders' => 0, 
         'canceled_orders' => 0,
         'confirmed_amount' => 0,
-        'total_amount' => 0
+        'total_amount' => 0,
+        'monthly_orders' => 0,
+        'monthly_amount' => 0,
+        'last_30_days_orders' => 0,
+        'last_30_days_amount' => 0
     ];
 
     // Calculate performance metrics
@@ -115,7 +148,7 @@ try {
                     SELECT 
                         agent_id,
                         CASE 
-                            WHEN COUNT(*) > 0 THEN (SUM(CASE WHEN status = 1 THEN 1 ELSE 0 END) / COUNT(*)) * 100
+                            WHEN COUNT(*) > 0 THEN (SUM(CASE WHEN status = 'confirmed' THEN 1 ELSE 0 END) / COUNT(*)) * 100
                             ELSE 0 
                         END as confirmation_rate
                     FROM agent_confirmations 
@@ -129,7 +162,16 @@ try {
     $performancePercentage = $avgConfirmationRate > 0 ? 
         min(100, round(($confirmationRate / $avgConfirmationRate) * 100)) : $confirmationRate;
 
-    // Get recent confirmations (orders from WooCommerce/YouCan)
+    // Calculate monthly cost and ROI
+    $monthlyCost = $stats['monthly_amount'] * ($agentData['service_fee'] / 100);
+    $monthlyROI = $monthlyCost > 0 ? 
+        round((($stats['monthly_amount'] - $monthlyCost) / $monthlyCost) * 100, 2) : 0;
+
+    // Calculate monthly performance
+    $monthlyPerformance = $stats['monthly_orders'] > 0 ? 
+        round(($stats['monthly_orders'] * 100) / ($stats['monthly_orders'] + ($stats['monthly_orders'] * 0.2)), 1) : 0;
+
+    // Get recent confirmations
     $confirmationsQuery = "SELECT 
                                 id,
                                 order_id,
@@ -152,19 +194,51 @@ try {
         'name' => $agentData['name'],
         'email' => $agentData['email'],
         'phone' => $agentData['phone'],
-        'is_active' => $agentData['is_active'],
+        'is_active' => (bool)$agentData['is_active'],
         'created_at' => $agentData['created_at'],
         'updated_at' => $agentData['updated_at'],
+        'service_fee' => floatval($agentData['service_fee']),
+        'confirmation_rate' => floatval($agentData['confirmation_rate']),
+        'score' => intval($agentData['score']),
+        'total_payed' => floatval($agentData['total_payed']),
+        'total_earned' => floatval($agentData['total_earned']),
+        // Team information
+        'team' => [
+            'id' => $agentData['team_id'],
+            'name' => $agentData['team_name'],
+            'description' => $agentData['team_description']
+        ],
+        // Responsable information
+        'responsable' => [
+            'id' => $agentData['responsable_id'],
+            'name' => $agentData['responsable_name'],
+            'email' => $agentData['responsable_email'],
+            'phone' => $agentData['responsable_phone']
+        ],
         'statistics' => [
+            // Order statistics
             'total_orders' => intval($stats['total_orders']),
             'confirmed_orders' => intval($stats['confirmed_orders']),
             'pending_orders' => intval($stats['pending_orders']),
             'canceled_orders' => intval($stats['canceled_orders']),
             'confirmed_amount' => floatval($stats['confirmed_amount']),
             'total_amount' => floatval($stats['total_amount']),
-            'confirmation_rate' => $confirmationRate,
-            'cancellation_rate' => $cancellationRate,
-            'performance_percentage' => $performancePercentage
+            
+            // Monthly statistics
+            'monthly_orders' => intval($stats['monthly_orders']),
+            'monthly_amount' => floatval($stats['monthly_amount']),
+            'monthly_cost' => floatval($monthlyCost),
+            'monthly_roi' => floatval($monthlyROI),
+            'monthly_performance' => floatval($monthlyPerformance),
+            
+            // Last 30 days statistics
+            'last_30_days_orders' => intval($stats['last_30_days_orders']),
+            'last_30_days_amount' => floatval($stats['last_30_days_amount']),
+            
+            // Performance metrics
+            'confirmation_rate' => floatval($confirmationRate),
+            'cancellation_rate' => floatval($cancellationRate),
+            'performance_percentage' => floatval($performancePercentage)
         ]
     ];
 
@@ -177,23 +251,27 @@ try {
     $formattedConfirmations = [];
     
     $statusLabels = [
-        0 => 'En attente',
-        1 => 'Confirmé et expédié',
-        2 => 'Annulé'
+        'pending' => 'En attente',
+        'confirmed' => 'Confirmé',
+        'cancelled' => 'Annulé',
+        'refunded' => 'Remboursé',
+        'failed' => 'Échoué'
     ];
 
-    if(!empty($confirmations)) : foreach ($confirmations as $confirmation) {
-        $formattedConfirmations[] = [
-            'id' => $confirmation['id'],
-            'order_id' => $confirmation['order_id'],
-            'amount' => floatval($confirmation['amount']),
-            'status' => intval($confirmation['status']),
-            'status_label' => $statusLabels[$confirmation['status']] ?? 'Inconnu',
-            'customer_name' => $confirmation['customer_name'],
-            'customer_phone' => $confirmation['customer_phone'],
-            'created_at' => $confirmation['created_at']
-        ];
-    } endif;
+    if(!empty($confirmations)) {
+        foreach ($confirmations as $confirmation) {
+            $formattedConfirmations[] = [
+                'id' => $confirmation['id'],
+                'order_id' => $confirmation['order_id'],
+                'amount' => floatval($confirmation['amount']),
+                'status' => $confirmation['status'],
+                'status_label' => $statusLabels[$confirmation['status']] ?? 'Inconnu',
+                'customer_name' => $confirmation['customer_name'],
+                'customer_phone' => $confirmation['customer_phone'],
+                'created_at' => $confirmation['created_at']
+            ];
+        }
+    }
     
     echo json_encode([
         'success' => true,
@@ -209,7 +287,7 @@ try {
     http_response_code(500);
     echo json_encode([
         'success' => false,
-        'message' => 'Erreur de base de données'
+        'message' => 'Erreur de base de données: ' . $e->getMessage()
     ]);
     
 } catch (Exception $e) {
@@ -219,7 +297,7 @@ try {
     http_response_code(500);
     echo json_encode([
         'success' => false,
-        'message' => 'Erreur interne du serveur'
+        'message' => 'Erreur interne du serveur: ' . $e->getMessage()
     ]);
 }
 ?>

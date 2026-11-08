@@ -6,7 +6,7 @@ class User {
             $_data,
             $_sessionName,
             $_isLoggedIn,
-            $_userType; // 'user' or 'agent'
+            $_userType; // 'user', 'agent', or 'responsable'
 
     public function __construct($user = null){
 
@@ -43,14 +43,13 @@ class User {
         }
     }
 
-    // find user in both tables with multiple login options for users
+    // find user in all tables with multiple login options
     public function find($user = null){
         
         if($user){
             
             // First try to find in users table with multiple fields (username, email, phone)
             $data = $this->findInUsersTable($user);
-
             
             if($data){  
                 $this->_data = $data;
@@ -64,6 +63,15 @@ class User {
             if($data->count()){  
                 $this->_data = $data->first();
                 $this->_userType = 'agent';
+                return true;
+            }
+            
+            // If not found in agents, try responsables table (email only)
+            $data = $this->_db->get('responsables', array('email', '=', $user));
+            
+            if($data->count()){  
+                $this->_data = $data->first();
+                $this->_userType = 'responsable';
                 return true;
             }
         }
@@ -104,7 +112,7 @@ class User {
         return null;
     }
     
-    // log in user or agent
+    // log in user, agent, or responsable
     public function login($username = null, $password = null, $remember = false) {
 
         if (!$username && !$password && $this->exists()) {
@@ -148,8 +156,8 @@ class User {
 
     // Get user identifier based on type
     private function getUserIdentifier() {
-        if($this->_userType === 'agent') {
-            return $this->data()->email; // Agents use email as identifier
+        if($this->_userType === 'agent' || $this->_userType === 'responsable') {
+            return $this->data()->email; // Agents and responsables use email as identifier
         } else {
             return $this->data()->email; // Users use username
         }
@@ -158,7 +166,7 @@ class User {
     // Check if account is active
     private function isAccountActive() {
 
-        if($this->_userType === 'agent') {
+        if($this->_userType === 'agent' || $this->_userType === 'responsable') {
             return $this->data()->is_active == 1;
         } else {
             
@@ -201,11 +209,13 @@ class User {
                     CASE 
                         WHEN rt.user_type = 'user' THEN u.username
                         WHEN rt.user_type = 'agent' THEN a.email
+                        WHEN rt.user_type = 'responsable' THEN r.email
                     END as identifier,
                     rt.user_type
                     FROM remember_tokens rt 
                     LEFT JOIN users u ON rt.user_id = u.id AND rt.user_type = 'user'
                     LEFT JOIN agents a ON rt.user_id = a.id AND rt.user_type = 'agent'
+                    LEFT JOIN responsables r ON rt.user_id = r.id AND rt.user_type = 'responsable'
                     WHERE rt.token = ? AND rt.expires_at > NOW()";
                     
             if($this->_db->query($sql, array($hashedToken))) {
@@ -213,7 +223,7 @@ class User {
                 if($this->_db->count() > 0) {
                     $tokenData = $this->_db->first();
                     
-                    // Find the user/agent based on type
+                    // Find the user/agent/responsable based on type
                     $this->_userType = $tokenData->user_type;
                     if($this->find($tokenData->identifier)) {
                         // Log user in
@@ -258,10 +268,13 @@ class User {
                 }
             }
         }
-    
         // For 'agent' type
         elseif ($this->_userType === 'agent') {
             return $this->data()->role === 'admin' || $key === 'basic_access';
+        }
+        // For 'responsable' type
+        elseif ($this->_userType === 'responsable') {
+            return $key === 'responsable_access' || $key === 'basic_access';
         }
     
         return false;
@@ -294,7 +307,7 @@ class User {
     }
     
     /**
-     * Check if email exists in database (both tables)
+     * Check if email exists in database (all tables)
      */
     public function emailExists($email) {
         // Check in users table
@@ -315,6 +328,15 @@ class User {
             }
         }
         
+        // Check in responsables table
+        $sql = "SELECT id FROM responsables WHERE email = ?";
+        
+        if($this->_db->query($sql, array($email))) {
+            if($this->_db->count() > 0) {
+                return true;
+            }
+        }
+        
         return false;
     }
 
@@ -323,12 +345,14 @@ class User {
             // First, clean up expired tokens
             $this->_db->query("DELETE FROM password_resets WHERE expires_at < NOW()");
             
-            // Check if user exists in users table
+            // Check if user exists in any table
             $sql = "SELECT id, 'user' as type FROM users WHERE email = ? 
                     UNION 
-                    SELECT id, 'agent' as type FROM agents WHERE email = ?";
+                    SELECT id, 'agent' as type FROM agents WHERE email = ?
+                    UNION
+                    SELECT id, 'responsable' as type FROM responsables WHERE email = ?";
                     
-            if($this->_db->query($sql, array($email, $email))) {
+            if($this->_db->query($sql, array($email, $email, $email))) {
                 if($this->_db->count() > 0) {
                     $userData = $this->_db->first();
                     $userId = $userData->id;
@@ -363,11 +387,13 @@ class User {
                     CASE 
                         WHEN pr.user_type = 'user' THEN u.username
                         WHEN pr.user_type = 'agent' THEN a.name
+                        WHEN pr.user_type = 'responsable' THEN r.name
                     END as name,
                     pr.email
                     FROM password_resets pr 
                     LEFT JOIN users u ON pr.user_id = u.id AND pr.user_type = 'user'
                     LEFT JOIN agents a ON pr.user_id = a.id AND pr.user_type = 'agent'
+                    LEFT JOIN responsables r ON pr.user_id = r.id AND pr.user_type = 'responsable'
                     WHERE pr.token = ? AND pr.expires_at > NOW()";
                     
             if($this->_db->query($sql, array($token))) {
@@ -390,13 +416,21 @@ class User {
             }
             
             // Update password in appropriate table
-            $table = ($resetData->user_type === 'user') ? 'users' : 'agents';
-            $sql = "UPDATE {$table} SET password = ? WHERE id = ?";
+            $table = '';
+            switch($resetData->user_type) {
+                case 'user': $table = 'users'; break;
+                case 'agent': $table = 'agents'; break;
+                case 'responsable': $table = 'responsables'; break;
+            }
             
-            if($this->_db->query($sql, array($hashedPassword, $resetData->user_id))) {
-                // Delete the used reset token
-                $this->_db->query("DELETE FROM password_resets WHERE token = ?", array($token));
-                return true;
+            if($table) {
+                $sql = "UPDATE {$table} SET password = ? WHERE id = ?";
+                
+                if($this->_db->query($sql, array($hashedPassword, $resetData->user_id))) {
+                    // Delete the used reset token
+                    $this->_db->query("DELETE FROM password_resets WHERE token = ?", array($token));
+                    return true;
+                }
             }
         } catch(Exception $e) {
             throw $e;
@@ -458,4 +492,9 @@ class User {
     public function isAgent(){
         return $this->_userType === 'agent';
     }
-} ?>
+    
+    public function isResponsable(){
+        return $this->_userType === 'responsable';
+    }
+}
+?>

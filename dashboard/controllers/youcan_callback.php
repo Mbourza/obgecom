@@ -3,7 +3,7 @@ require_once('../core/init.php');
 
 $db = DB::getInstance();
 
-// Handle OAuth errors from YouCan (user denial, app not approved, etc.)
+// Comprehensive error handling for OAuth errors from YouCan
 $error = $_GET['error'] ?? null;
 $error_description = $_GET['error_description'] ?? null;
 
@@ -12,11 +12,11 @@ if ($error) {
     
     $user_message = match($error) {
         'access_denied' => 'Vous avez refusé l\'accès à votre boutique YouCan',
-        'invalid_client' => 'Votre application n\'est pas encore approuvée par YouCan Partner. Veuillez d\'abord installer l\'application depuis le marketplace YouCan',
-        'unauthorized_client' => 'Application non autorisée. Veuillez installer l\'application depuis le marketplace YouCan de votre boutique',
-        'invalid_scope' => 'Permissions invalides demandées',
-        'invalid_request' => 'Requête invalide. Vérifiez vos paramètres OAuth',
-        default => "Erreur OAuth: " . ($error_description ?? $error)
+        'invalid_client' => 'Application non reconnue. Veuillez vérifier que l\'application est installée depuis le marketplace YouCan',
+        'unauthorized_client' => 'Application non autorisée. Veuillez installer l\'application depuis le marketplace YouCan',
+        'invalid_scope' => 'Permissions insuffisantes. Veuillez réinstaller l\'application',
+        'invalid_request' => 'Requête invalide. Veuillez réessayer',
+        default => "Erreur d'authentification: " . ($error_description ?? $error)
     };
     
     showErrorAndRedirect($user_message);
@@ -25,10 +25,10 @@ if ($error) {
 $code = $_GET['code'] ?? null;
 $state = $_GET['state'] ?? null;
 
-// Debug: Log what we received
+// Debug logging
 error_log("YouCan Callback received - Code: " . ($code ? 'present' : 'missing') . ", State: $state");
 
-// Validate OAuth parameters
+// Validate required parameters
 if (!$code) {
     error_log("YouCan OAuth failed - Missing authorization code");
     showErrorAndRedirect('Code d\'autorisation manquant. Veuillez réessayer la connexion');
@@ -36,115 +36,44 @@ if (!$code) {
 
 if (!$state) {
     error_log("YouCan OAuth failed - Missing state parameter");
-    showErrorAndRedirect('Paramètre state manquant');
+    showErrorAndRedirect('Paramètre de sécurité manquant');
 }
 
-// Validate state to prevent CSRF attacks
+// CSRF protection - Validate state
 $session_state = $_SESSION['youcan_oauth_state'] ?? null;
-if ($state !== $session_state) {
+if (!$session_state || !hash_equals($session_state, $state)) {
     error_log("YouCan OAuth validation failed - State mismatch. Expected: $session_state, Got: $state");
     showErrorAndRedirect('Validation OAuth échouée. Veuillez réessayer');
 }
 
-// Configuration YouCan
-$client_id = "1757";
-$client_secret = "POnXQ1efzp3Si0dyfCbdwQBaXRaXx6CRJNGNMep7";
+// YouCan Configuration
+$client_id = "2310";
+$client_secret = "m7gzBVHkdZEuBRI9TPC8pI4sVFdbIHFZMhvc7xQ8";
 $redirect_uri = "https://obgecom.com/dashboard/controllers/youcan_callback.php";
 
 // Exchange authorization code for access token
-$token_url = "https://api.youcan.shop/oauth/token";
-$post_fields = [
-    'grant_type' => 'authorization_code',
-    'client_id' => $client_id,
-    'client_secret' => $client_secret,
-    'code' => $code,
-    'redirect_uri' => $redirect_uri
-];
+$token_response = exchangeToken($code, $client_id, $client_secret, $redirect_uri);
 
-$ch = curl_init($token_url);
-curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-curl_setopt($ch, CURLOPT_POST, true);
-curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($post_fields));
-curl_setopt($ch, CURLOPT_HTTPHEADER, [
-    'Content-Type: application/x-www-form-urlencoded'
-]);
-curl_setopt($ch, CURLOPT_TIMEOUT, 30);
-
-$response = curl_exec($ch);
-$http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-$curl_error = curl_error($ch);
-curl_close($ch);
-
-// Debug: Log the response
-error_log("YouCan token response (HTTP $http_code): $response");
-if ($curl_error) {
-    error_log("YouCan CURL error: $curl_error");
-    showErrorAndRedirect('Erreur de connexion au serveur YouCan. Veuillez réessayer');
+if (!$token_response['success']) {
+    error_log("Token exchange failed: " . $token_response['message']);
+    showErrorAndRedirect($token_response['message']);
 }
 
-// Handle different HTTP response codes
-if ($http_code !== 200) {
-    $error_details = '';
-    $user_friendly_message = '';
-    
-    if ($response) {
-        $result = json_decode($response, true);
-        $error_details = $result['error'] ?? $result['message'] ?? $result['error_description'] ?? '';
-    }
-    
-    switch ($http_code) {
-        case 400:
-            $user_friendly_message = 'Requête invalide. Le code d\'autorisation a peut-être expiré';
-            break;
-        case 401:
-            if (stripos($error_details, 'client') !== false) {
-                $user_friendly_message = 'Application non approuvée. Veuillez d\'abord installer l\'application depuis le marketplace YouCan de votre boutique';
-            } else {
-                $user_friendly_message = 'Identifiants OAuth invalides';
-            }
-            break;
-        case 403:
-            $user_friendly_message = 'Accès refusé. Votre application n\'a pas les permissions nécessaires';
-            break;
-        case 404:
-            $user_friendly_message = 'Endpoint OAuth non trouvé. Contactez le support';
-            break;
-        case 429:
-            $user_friendly_message = 'Trop de tentatives. Veuillez patienter quelques minutes';
-            break;
-        case 500:
-        case 502:
-        case 503:
-            $user_friendly_message = 'Erreur serveur YouCan. Veuillez réessayer dans quelques instants';
-            break;
-        default:
-            $user_friendly_message = "Erreur HTTP $http_code lors de l'obtention du token";
-    }
-    
-    error_log("YouCan token exchange failed - HTTP $http_code: $error_details");
-    showErrorAndRedirect($user_friendly_message . ($error_details ? " ($error_details)" : ''));
-}
+$access_token = $token_response['access_token'];
+$refresh_token = $token_response['refresh_token'] ?? null;
+$expires_in = $token_response['expires_in'] ?? 3600;
 
-$result = json_decode($response, true);
-
-if (!isset($result['access_token'])) {
-    $error_msg = $result['error'] ?? $result['error_description'] ?? 'Token non reçu';
-    error_log("YouCan token missing in response: " . json_encode($result));
-    showErrorAndRedirect("Impossible d'obtenir le token d'accès: $error_msg");
-}
-
-$access_token = $result['access_token'];
-$refresh_token = $result['refresh_token'] ?? null;
-$expires_in = $result['expires_in'] ?? 3600;
-
-// Try to get store information via YouCan API (optional)
+// Get store information
 $store_info = getYouCanStoreInfo($access_token);
 if (!$store_info) {
-    error_log("YouCan store info unavailable, using session data");
-    // Use basic store info from session if API call fails
+    error_log("Warning: Could not fetch store info from API");
+    // Fall back to session data
     $store_info = [
         'name' => $_SESSION['youcan_store_name'] ?? 'Boutique YouCan',
-        'domain' => $_SESSION['youcan_store_domain'] ?? ''
+        'domain' => $_SESSION['youcan_store_domain'] ?? '',
+        'email' => null,
+        'currency' => 'MAD',
+        'country' => 'MA'
     ];
 }
 
@@ -154,9 +83,9 @@ if (!$user_id) {
     showErrorAndRedirect('Utilisateur non authentifié. Veuillez vous reconnecter');
 }
 
-// Retrieve store details from session
-$store_name = $_SESSION['youcan_store_name'] ?? $store_info['name'] ?? 'Boutique YouCan';
-$store_domain = $_SESSION['youcan_store_domain'] ?? $store_info['domain'] ?? '';
+// Prepare store data
+$store_name = $store_info['name'] ?? $_SESSION['youcan_store_name'] ?? 'Boutique YouCan';
+$store_domain = $store_info['domain'] ?? $_SESSION['youcan_store_domain'] ?? '';
 
 // Check if store already exists
 $existing_store = $db->getThisQuery(
@@ -165,11 +94,8 @@ $existing_store = $db->getThisQuery(
 );
 
 if (!empty($existing_store)) {
-    // Clean up session before showing warning
-    unset($_SESSION['youcan_oauth_state']);
-    unset($_SESSION['youcan_store_name']);
-    unset($_SESSION['youcan_store_domain']);
-    
+    // Clean up session
+    cleanOAuthSession();
     showErrorAndRedirect('Cette boutique YouCan est déjà connectée à votre compte', 'warning');
 }
 
@@ -189,87 +115,278 @@ $store_data = [
 ];
 
 try {
+    // Start transaction
+    $db->beginTransaction();
+    
     $inserted = $db->insert('stores', $store_data);
     
     if ($inserted) {
-        // Clean up OAuth session data
-        unset($_SESSION['youcan_oauth_state']);
-        unset($_SESSION['youcan_store_name']);
-        unset($_SESSION['youcan_store_domain']);
+        // Update onboarding progress
+        updateUserOnboarding($db, $user_id, 'step_store', true);
         
+        // Commit transaction
+        $db->commit();
+        
+        // Clean up OAuth session
+        cleanOAuthSession();
+        
+        // Log success
         error_log("YouCan store connected successfully - User: $user_id, Store: $store_name");
-        header("Location: ../settings.php?success=1&platform=youcan");
+        
+        // Redirect to success page
+        header("Location: ../onboarding?success=1&platform=youcan&store=" . urlencode($store_name));
         exit;
     } else {
-        error_log("Database insert failed for YouCan store: " . json_encode($store_data));
+        $db->rollBack();
+        error_log("Database insert failed for YouCan store");
         showErrorAndRedirect('Erreur lors de l\'enregistrement de la boutique. Veuillez réessayer');
     }
 } catch (Exception $e) {
+    $db->rollBack();
     error_log("Exception during YouCan store insert: " . $e->getMessage());
     showErrorAndRedirect('Erreur système lors de l\'ajout de la boutique');
 }
 
+/**
+ * Exchange authorization code for access token
+ */
+function exchangeToken($code, $client_id, $client_secret, $redirect_uri) {
+    // Try multiple authentication methods
+    $methods = [
+        'body' => [
+            'url' => 'https://api.youcan.shop/oauth/token',
+            'use_basic_auth' => false
+        ],
+        'basic_auth' => [
+            'url' => 'https://api.youcan.shop/oauth/token',
+            'use_basic_auth' => true
+        ],
+        'alt_endpoint' => [
+            'url' => 'https://api.youcan.shop/token',
+            'use_basic_auth' => false
+        ]
+    ];
+    
+    $last_error = '';
+    
+    foreach ($methods as $method_name => $config) {
+        error_log("Trying token exchange method: $method_name");
+        
+        $post_fields = [
+            'grant_type' => 'authorization_code',
+            'code' => $code,
+            'redirect_uri' => $redirect_uri
+        ];
+        
+        // Add credentials to body if not using Basic Auth
+        if (!$config['use_basic_auth']) {
+            $post_fields['client_id'] = $client_id;
+            $post_fields['client_secret'] = $client_secret;
+        }
+        
+        $ch = curl_init($config['url']);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_POST, true);
+        curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($post_fields));
+        curl_setopt($ch, CURLOPT_TIMEOUT, 30);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+        curl_setopt($ch, CURLOPT_USERAGENT, 'OBGEcom/1.0');
+        
+        $headers = [
+            'Content-Type: application/x-www-form-urlencoded',
+            'Accept: application/json'
+        ];
+        
+        // Add Basic Auth header if needed
+        if ($config['use_basic_auth']) {
+            $credentials = base64_encode($client_id . ':' . $client_secret);
+            $headers[] = 'Authorization: Basic ' . $credentials;
+        }
+        
+        curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
+        
+        // Enable verbose output for debugging
+        curl_setopt($ch, CURLOPT_VERBOSE, true);
+        $verbose = fopen('php://temp', 'w+');
+        curl_setopt($ch, CURLOPT_STDERR, $verbose);
+        
+        $response = curl_exec($ch);
+        $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $curl_error = curl_error($ch);
+        
+        // Log verbose information
+        rewind($verbose);
+        $verboseLog = stream_get_contents($verbose);
+        error_log("Method $method_name - CURL verbose: $verboseLog");
+        fclose($verbose);
+        
+        curl_close($ch);
+        
+        // Log response
+        error_log("Method $method_name - HTTP $http_code: " . substr($response, 0, 500));
+        
+        if ($curl_error) {
+            $last_error = "CURL error: $curl_error";
+            continue;
+        }
+        
+        if ($http_code === 200) {
+            $result = json_decode($response, true);
+            if (isset($result['access_token'])) {
+                error_log("Token exchange successful with method: $method_name");
+                return [
+                    'success' => true,
+                    'access_token' => $result['access_token'],
+                    'refresh_token' => $result['refresh_token'] ?? null,
+                    'expires_in' => $result['expires_in'] ?? 3600,
+                    'method' => $method_name
+                ];
+            }
+        }
+        
+        $last_error = "HTTP $http_code: " . $response;
+    }
+    
+    // All methods failed
+    error_log("All token exchange methods failed. Last error: $last_error");
+    return [
+        'success' => false,
+        'message' => 'Impossible d\'obtenir le token d\'accès. Veuillez réessayer ou contacter le support.'
+    ];
+}
+
+/**
+ * Get store information from YouCan API
+ */
 function getYouCanStoreInfo($access_token) {
-    $api_url = "https://api.youcan.shop/v2/store";
+    $endpoints = [
+        'https://api.youcan.shop/store',
+        'https://api.youcan.shop/v1/store',
+        'https://api.youcan.shop/merchant/store'
+    ];
     
-    $ch = curl_init($api_url);
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_TIMEOUT, 30);
-    curl_setopt($ch, CURLOPT_HTTPHEADER, [
-        'Authorization: Bearer ' . $access_token,
-        'Content-Type: application/json'
-    ]);
-    
-    $response = curl_exec($ch);
-    $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    $curl_error = curl_error($ch);
-    curl_close($ch);
-    
-    if ($curl_error) {
-        error_log("YouCan store info CURL error: $curl_error");
-        return null;
+    foreach ($endpoints as $endpoint) {
+        $ch = curl_init($endpoint);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+        curl_setopt($ch, CURLOPT_HTTPHEADER, [
+            'Authorization: Bearer ' . $access_token,
+            'Content-Type: application/json',
+            'Accept: application/json'
+        ]);
+        
+        $response = curl_exec($ch);
+        $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+        
+        if ($http_code === 200 && $response) {
+            $data = json_decode($response, true);
+            $store_data = $data['data'] ?? $data;
+            
+            // Normalize store data
+            return [
+                'name' => $store_data['name'] ?? $store_data['store_name'] ?? null,
+                'domain' => $store_data['domain'] ?? $store_data['subdomain'] ?? null,
+                'email' => $store_data['email'] ?? $store_data['contact_email'] ?? null,
+                'currency' => $store_data['currency'] ?? $store_data['default_currency'] ?? 'MAD',
+                'country' => $store_data['country'] ?? $store_data['country_code'] ?? 'MA',
+                'phone' => $store_data['phone'] ?? null,
+                'logo' => $store_data['logo'] ?? $store_data['store_logo'] ?? null
+            ];
+        }
     }
     
-    if ($http_code === 200 && $response) {
-        $data = json_decode($response, true);
-        return $data['data'] ?? $data;
-    }
-    
-    error_log("YouCan store info failed - HTTP $http_code: $response");
     return null;
 }
 
+/**
+ * Get current user ID from session
+ */
 function getCurrentUserId($db) {
-    if (!isset($_SESSION['user']) || empty($_SESSION['user']['username'])) {
+    if (!isset($_SESSION['user']) || empty($_SESSION['user'])) {
         return null;
     }
 
-    // Prefer explicit ID if available
+    // Return ID if directly available
     if (!empty($_SESSION['user']['id'])) {
         return (int)$_SESSION['user']['id'];
     }
 
-    // Try to match identifier against username, email, or phone
-    $identifier = $_SESSION['user']['username'];
-    $user = $db->getThisQuery("
-        SELECT id 
-        FROM users 
-        WHERE username = ? OR email = ? OR phone = ?
-        LIMIT 1
-    ", [$identifier, $identifier, $identifier]);
-
-    if ($user && isset($user[0]['id'])) {
-        return (int)$user[0]['id'];
+    // Try to find user by username/email/phone
+    $identifier = $_SESSION['user']['username'] ?? $_SESSION['user']['email'] ?? null;
+    if (!$identifier) {
+        return null;
     }
 
-    return null;
+    $user = $db->getThisQuery(
+        "SELECT id FROM users WHERE username = ? OR email = ? OR phone = ? LIMIT 1",
+        [$identifier, $identifier, $identifier]
+    );
+
+    return $user[0]['id'] ?? null;
 }
 
+/**
+ * Update user onboarding progress
+ */
+function updateUserOnboarding($db, $user_id, $step, $completed = true) {
+    if ($step !== 'step_store') {
+        return true;
+    }
+    
+    try {
+        $current_time = date('Y-m-d H:i:s');
+        
+        // Check if onboarding record exists
+        $existing = $db->getThisQuery(
+            "SELECT id FROM user_onboarding WHERE user_id = ?",
+            [$user_id]
+        );
+        
+        if (!empty($existing)) {
+            return $db->update('user_onboarding', $existing[0]['id'], [
+                'step_store' => $completed ? 1 : 0,
+                'updated_at' => $current_time
+            ]);
+        } else {
+            return $db->insert('user_onboarding', [
+                'user_id' => $user_id,
+                'step_store' => $completed ? 1 : 0,
+                'completed' => 0,
+                'created_at' => $current_time,
+                'updated_at' => $current_time
+            ]);
+        }
+    } catch (Exception $e) {
+        error_log("Onboarding update failed: " . $e->getMessage());
+        return false;
+    }
+}
+
+/**
+ * Clean up OAuth session data
+ */
+function cleanOAuthSession() {
+    unset($_SESSION['youcan_oauth_state']);
+    unset($_SESSION['youcan_store_name']);
+    unset($_SESSION['youcan_store_domain']);
+}
+
+/**
+ * Display error message and redirect
+ */
 function showErrorAndRedirect($message, $type = 'error') {
     $icon = $type === 'warning' ? '⚠️' : '❌';
     $bgColor = $type === 'warning' ? '#ff9800' : '#f44336';
     $title = $type === 'warning' ? 'Attention' : 'Erreur de connexion YouCan';
     
+    // Store message in session for retrieval after redirect
+    $_SESSION['flash_message'] = [
+        'type' => $type,
+        'message' => $message
+    ];
+    
+    // HTML error page with auto-redirect
     echo "<!DOCTYPE html>
     <html lang='fr'>
     <head>
@@ -279,7 +396,7 @@ function showErrorAndRedirect($message, $type = 'error') {
         <style>
             * { margin: 0; padding: 0; box-sizing: border-box; }
             body {
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
                 background: linear-gradient(135deg, #1a73e8 0%, #0d47a1 100%);
                 min-height: 100vh;
                 display: flex;
@@ -347,11 +464,25 @@ function showErrorAndRedirect($message, $type = 'error') {
             .progress-fill {
                 height: 100%;
                 background: $bgColor;
-                animation: progress 5s linear;
+                animation: progress 5s linear forwards;
             }
             @keyframes progress {
                 from { width: 0%; }
                 to { width: 100%; }
+            }
+            .btn {
+                display: inline-block;
+                background: $bgColor;
+                color: white;
+                text-decoration: none;
+                padding: 12px 30px;
+                border-radius: 8px;
+                margin-top: 20px;
+                font-weight: 500;
+                transition: opacity 0.3s;
+            }
+            .btn:hover {
+                opacity: 0.9;
             }
         </style>
     </head>
@@ -370,10 +501,18 @@ function showErrorAndRedirect($message, $type = 'error') {
             3. Installez/Approuvez l'application OBGEcom<br>
             4. Réessayez la connexion
         </div>";
+    } elseif (stripos($message, 'token') !== false) {
+        echo "<div class='help-text'>
+            <strong>💡 Problème d'authentification:</strong><br>
+            • Vérifiez que votre boutique est active<br>
+            • Réessayez dans quelques instants<br>
+            • Contactez le support si le problème persiste
+        </div>";
     }
     
     echo "<div class='redirect-info'>Redirection vers les paramètres dans <span id='countdown'>5</span> secondes...</div>
             <div class='progress-bar'><div class='progress-fill'></div></div>
+            <a href='../onboarding' class='btn'>Retourner aux paramètres</a>
         </div>
         <script>
             let count = 5;
@@ -382,12 +521,11 @@ function showErrorAndRedirect($message, $type = 'error') {
                 document.getElementById('countdown').textContent = count;
                 if (count <= 0) {
                     clearInterval(countdown);
-                    window.location.href = '../settings.php';
+                    window.location.href = '../onboarding';
                 }
             }, 1000);
         </script>
     </body>
     </html>";
     exit;
-}
-?>
+} ?>

@@ -15,14 +15,41 @@ $name = !empty($user[0]['name']) ? $user[0]['name'] : "Utilisateur";
 $role = !empty($user[0]['role']) ? $user[0]['role'] : "Administrateur";
 $initials = getInitials($name);
 
+// Check if AI Confirmation is enabled for this user
+$ai_confirmation_enabled = false;
+$ai_check = $db->getThisQuery(
+    "SELECT ai_confirmation FROM system_settings WHERE user_id = ? AND setting_key = 'ai_confirmation'",
+    [$user_id]
+);
+
+if (!empty($ai_check) && $ai_check[0]['ai_confirmation'] == 1) {
+    $ai_confirmation_enabled = true;
+}
+
+$stock_status = $db->getThisQuery("
+    SELECT 
+        SUM(CASE WHEN stock_quantity > 10 THEN 1 ELSE 0 END) as in_stock,
+        SUM(CASE WHEN stock_quantity BETWEEN 1 AND 10 THEN 1 ELSE 0 END) as low_stock,
+        SUM(CASE WHEN stock_quantity = 0 THEN 1 ELSE 0 END) as out_of_stock
+    FROM products 
+    WHERE user_id = ?
+", [$user_id]);
+
+if ($stock_status && isset($stock_status[0])) {
+    $stock_stats['in_stock'] = $stock_status[0]['in_stock'] ?? 0;
+    $stock_stats['low_stock'] = $stock_status[0]['low_stock'] ?? 0;
+    $stock_stats['out_of_stock'] = $stock_status[0]['out_of_stock'] ?? 0;
+}
+
 ?>
 
 <style>
     :root {
-        --sidebar-width: 20%;
+        --sidebar-width: 280px;
         --sidebar-collapsed-width: 80px;
         --primary-color: #9c80fd;
         --primary-gradient: linear-gradient(135deg, #5f34d9 0%, #9c80fd 100%);
+        --admin-gradient: linear-gradient(135deg, #5f34d9 0%, #9c80fd 100%);
         --secondary-color: #1a202c;
         --success-color: #48bb78;
         --danger-color: #f56565;
@@ -48,6 +75,106 @@ $initials = getInitials($name);
         --radius-md: 0.5rem;
         --radius-lg: 0.75rem;
         --radius-xl: 1rem;
+    }
+
+    /* Subscription badge */
+    .subscription-badge {
+        display: inline-flex;
+        align-items: center;
+        padding: 3px 8px;
+        border-radius: 10px;
+        font-size: 10px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.3px;
+        margin-left: 8px;
+    }
+
+    .subscription-badge.active {
+        background: rgba(72, 187, 120, 0.2);
+        color: #48bb78;
+        border: 1px solid rgba(72, 187, 120, 0.3);
+    }
+
+    .subscription-badge.expired {
+        background: rgba(245, 101, 101, 0.2);
+        color: #f56565;
+        border: 1px solid rgba(245, 101, 101, 0.3);
+    }
+
+    .subscription-badge.pending {
+        background: rgba(237, 137, 54, 0.2);
+        color: #ed8936;
+        border: 1px solid rgba(237, 137, 54, 0.3);
+    }
+
+    .subscription-badge.free {
+        background: rgba(74, 85, 104, 0.2);
+        color: #a0aec0;
+        border: 1px solid rgba(74, 85, 104, 0.3);
+    }
+
+    /* AI Confirmation Badge */
+    .ai-badge {
+        display: inline-flex;
+        align-items: center;
+        padding: 3px 8px;
+        border-radius: 10px;
+        font-size: 10px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.3px;
+        margin-left: 8px;
+        background: rgba(156, 128, 253, 0.2);
+        color: #9c80fd;
+        border: 1px solid rgba(156, 128, 253, 0.3);
+    }
+
+    /* Stock Badge Styles */
+    .stock-badge {
+        display: inline-flex;
+        align-items: center;
+        padding: 3px 8px;
+        border-radius: 10px;
+        font-size: 10px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.3px;
+        margin-left: 8px;
+    }
+
+    .stock-badge.in-stock {
+        background: rgba(72, 187, 120, 0.2);
+        color: #48bb78;
+        border: 1px solid rgba(72, 187, 120, 0.3);
+    }
+
+    .stock-badge.low-stock {
+        background: rgba(237, 137, 54, 0.2);
+        color: #ed8936;
+        border: 1px solid rgba(237, 137, 54, 0.3);
+    }
+
+    .stock-badge.out-of-stock {
+        background: rgba(245, 101, 101, 0.2);
+        color: #f56565;
+        border: 1px solid rgba(245, 101, 101, 0.3);
+    }
+
+    /* Nav Sections */
+    .nav-section {
+        padding: 16px 0 8px 20px;
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        color: rgba(255, 255, 255, 0.5);
+        font-weight: 600;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        margin: 0 12px 8px;
+    }
+
+    .sidebar.collapsed .nav-section {
+        display: none;
     }
 
     /* Sidebar Styles */
@@ -82,19 +209,29 @@ $initials = getInitials($name);
         min-height: 80px;
         background: rgba(255, 255, 255, 0.05);
         backdrop-filter: blur(10px);
+        position: relative;
+    }
+
+    .sidebar-header::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 3px;
+        background: var(--admin-gradient);
     }
 
     .sidebar-header h1 {
-        font-size: 20px;
+        font-size: 18px;
         font-weight: 700;
         color: white;
         white-space: nowrap;
         overflow: hidden;
         transition: var(--transition);
-        background: var(--primary-gradient);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        background-clip: text;
+        display: flex;
+        align-items: center;
+        gap: 8px;
     }
 
     .sidebar.collapsed .sidebar-header h1 {
@@ -130,25 +267,26 @@ $initials = getInitials($name);
     .user-info {
         display: flex;
         align-items: center;
-        padding: 24px 20px;
+        padding: 20px;
         border-bottom: 1px solid rgba(255, 255, 255, 0.1);
         background: rgba(255, 255, 255, 0.02);
     }
 
     .user-avatar {
-        width: 48px;
-        height: 48px;
+        width: 44px;
+        height: 44px;
         border-radius: 50%;
-        background: var(--primary-gradient);
+        background: var(--admin-gradient);
         color: white;
         display: flex;
         align-items: center;
         justify-content: center;
         font-weight: 700;
-        margin-right: 16px;
+        margin-right: 12px;
         flex-shrink: 0;
         box-shadow: var(--shadow-md);
         transition: var(--transition);
+        font-size: 14px;
     }
 
     .user-avatar:hover {
@@ -170,31 +308,33 @@ $initials = getInitials($name);
 
     .user-name {
         font-weight: 600;
-        font-size: 15px;
+        font-size: 14px;
         color: white;
         white-space: nowrap;
         margin-bottom: 2px;
+        display: flex;
+        align-items: center;
     }
 
     .user-role {
-        font-size: 13px;
+        font-size: 12px;
         color: rgba(255, 255, 255, 0.7);
         white-space: nowrap;
     }
 
     .nav-menu {
         flex: 1;
-        padding: 20px 0;
+        padding: 16px 0;
     }
 
     .nav-item {
-        margin: 4px 0;
+        margin: 2px 0;
     }
 
     .nav-link {
         display: flex;
         align-items: center;
-        padding: 14px 20px;
+        padding: 12px 20px;
         color: rgba(255, 255, 255, 0.8);
         text-decoration: none;
         transition: var(--transition);
@@ -202,7 +342,8 @@ $initials = getInitials($name);
         white-space: nowrap;
         border-radius: 0;
         margin: 0 12px;
-        border-radius: var(--radius-lg);
+        border-radius: var(--radius-md);
+        font-size: 14px;
     }
 
     .nav-link:hover {
@@ -213,7 +354,7 @@ $initials = getInitials($name);
     }
 
     .nav-link.active {
-        background: var(--primary-gradient);
+        background: var(--admin-gradient);
         color: white;
         box-shadow: var(--shadow-lg);
     }
@@ -225,7 +366,7 @@ $initials = getInitials($name);
         top: 50%;
         transform: translateY(-50%);
         width: 4px;
-        height: 100%;
+        height: 80%;
         background: white;
         border-radius: 2px;
     }
@@ -235,15 +376,19 @@ $initials = getInitials($name);
         display: flex;
         align-items: center;
         justify-content: center;
-        width: 24px;
+        width: 20px;
         flex-shrink: 0;
-        font-size: 18px;
+        font-size: 16px;
     }
 
     .nav-text {
         overflow: hidden;
         transition: var(--transition);
         font-weight: 500;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        width: 100%;
     }
 
     .sidebar.collapsed .nav-text {
@@ -252,7 +397,7 @@ $initials = getInitials($name);
     }
 
     .sidebar-footer {
-        padding: 20px;
+        padding: 16px 20px;
         border-top: 1px solid rgba(255, 255, 255, 0.1);
         margin-top: auto;
         background: rgba(255, 255, 255, 0.02);
@@ -263,11 +408,12 @@ $initials = getInitials($name);
         align-items: center;
         color: rgba(255, 255, 255, 0.8);
         text-decoration: none;
-        padding: 12px 0;
+        padding: 10px 0;
         transition: var(--transition);
         white-space: nowrap;
         border-radius: var(--radius-md);
         font-weight: 500;
+        font-size: 14px;
     }
 
     .logout-btn:hover {
@@ -277,9 +423,9 @@ $initials = getInitials($name);
 
     .logout-btn i {
         margin-right: 16px;
-        width: 24px;
+        width: 20px;
         flex-shrink: 0;
-        font-size: 18px;
+        font-size: 16px;
     }
 
     .logout-text {
@@ -319,7 +465,7 @@ $initials = getInitials($name);
         color: white;
         padding: 8px 12px;
         border-radius: var(--radius-md);
-        font-size: 13px;
+        font-size: 12px;
         white-space: nowrap;
         z-index: 1001;
         box-shadow: var(--shadow-lg);
@@ -341,13 +487,13 @@ $initials = getInitials($name);
     .mobile-toggle {
         display: none;
         position: fixed;
-        top: 2px;
-        left: 2px;
+        top: 20px;
+        left: 20px;
         z-index: 1002;
-        background: var(--primary-gradient);
+        background: var(--admin-gradient);
         color: white;
         border: none;
-        padding: 8px;
+        padding: 10px;
         border-radius: var(--radius-md);
         cursor: pointer;
         box-shadow: var(--shadow-lg);
@@ -381,9 +527,8 @@ $initials = getInitials($name);
         display: block;
     }
 
-    /* Mobile Responsive - KEY CHANGES HERE */
+    /* Mobile Responsive */
     @media (max-width: 768px) {
-        /* Hide mobile button when sidebar is active */
         .mobile-toggle {
             display: flex !important;
         }
@@ -393,46 +538,42 @@ $initials = getInitials($name);
             pointer-events: none;
         }
 
-        /* Mobile sidebar behavior - show full width, not collapsed */
         .sidebar {
-            width: 280px; /* Fixed width for mobile, showing full content */
-            transform: translateX(-100%); /* Hidden by default */
+            width: 280px;
+            transform: translateX(-100%);
         }
 
         .sidebar.mobile-active {
-            transform: translateX(0); /* Show when active */
+            transform: translateX(0);
         }
 
-        /* Never collapse on mobile - override collapsed state */
         .sidebar.collapsed.mobile-active {
-            width: 280px; /* Force full width even if collapsed class is present */
+            width: 280px;
         }
 
-        /* Override collapsed text hiding on mobile */
         .sidebar.collapsed.mobile-active .sidebar-header h1,
         .sidebar.collapsed.mobile-active .user-details,
         .sidebar.collapsed.mobile-active .nav-text,
-        .sidebar.collapsed.mobile-active .logout-text {
+        .sidebar.collapsed.mobile-active .logout-text,
+        .sidebar.collapsed.mobile-active .nav-section {
             opacity: 1;
             width: auto;
+            display: block;
         }
 
-        /* Main content doesn't change on mobile */
         .main-content {
-            margin-left: 0; /* No margin on mobile */
+            margin-left: 0;
             padding: 20px;
         }
 
         .main-content.expanded {
-            margin-left: 0; /* Stay the same even when sidebar is "expanded" */
+            margin-left: 0;
         }
 
-        /* Hide desktop toggle button on mobile */
         .sidebar-toggle {
             display: none;
         }
 
-        /* Disable tooltips on mobile */
         .sidebar.collapsed .tooltip-wrapper:hover::after,
         .sidebar.collapsed .tooltip-wrapper:hover::before {
             display: none;
@@ -528,7 +669,6 @@ $initials = getInitials($name);
         50% { opacity: 0.5; }
         100% { opacity: 1; }
     }
-    
 </style>
 
 <!-- Mobile Toggle Button -->
@@ -550,12 +690,15 @@ $initials = getInitials($name);
     <div class="user-info">
         <div class="user-avatar"><?php echo htmlspecialchars($initials); ?></div>
         <div class="user-details">
-            <div class="user-name"><?php echo htmlspecialchars($name); ?></div>
+            <div class="user-name" style="color: #fff !important;"><?php echo htmlspecialchars($name); ?></div>
             <div class="user-role"><?php echo htmlspecialchars($role); ?></div>
         </div>
     </div>
     
     <nav class="nav-menu">
+        <!-- Section 1: Tableau de Bord -->
+        <div class="nav-section">Tableau de Bord</div>
+        
         <div class="nav-item">
             <div class="tooltip-wrapper" data-tooltip="Tableau de bord">
                 <a href="home" class="nav-link" data-page="dashboard">
@@ -566,6 +709,9 @@ $initials = getInitials($name);
                 </a>
             </div>
         </div>
+
+        <!-- Section 2: Gestion des Ventes -->
+        <div class="nav-section">Gestion des Ventes</div>
 
         <div class="nav-item">
             <div class="tooltip-wrapper" data-tooltip="Commandes">
@@ -578,8 +724,99 @@ $initials = getInitials($name);
             </div>
         </div>
 
+        <!-- Section 3: Gestion de Stock -->
+        <div class="nav-section">Gestion de Stock</div>
+
         <div class="nav-item">
-            <div class="tooltip-wrapper" data-tooltip="Produits">
+            <div class="tooltip-wrapper" data-tooltip="Vue d'ensemble du stock">
+                <a href="stock_overview" class="nav-link" data-page="stock_overview">
+                    <span class="nav-icon">
+                        <i class="bi bi-bar-chart"></i>
+                    </span>
+                    <span class="nav-text">
+                        VUE STOCK
+                        <?php
+                        // Default values
+                        $finalStatus = 'in-stock';
+                        $badgeText   = 'NORMAL';
+
+                        if (!empty($stock_status) && is_array($stock_status)) {
+
+                            if (in_array('out-of-stock', $stock_status, true)) {
+                                $finalStatus = 'out-of-stock';
+                                $badgeText   = 'RUPTURE';
+
+                            } elseif (in_array('low-stock', $stock_status, true)) {
+                                $finalStatus = 'low-stock';
+                                $badgeText   = 'FAIBLE';
+
+                            } elseif (in_array('in-stock', $stock_status, true)) {
+                                $finalStatus = 'in-stock';
+                                $badgeText   = 'NORMAL';
+                            }
+
+                        } elseif (is_string($stock_status)) {
+                            // If it's a single value (fallback safety)
+                            $finalStatus = $stock_status;
+
+                            switch ($stock_status) {
+                                case 'out-of-stock':
+                                    $badgeText = 'RUPTURE';
+                                    break;
+                                case 'low-stock':
+                                    $badgeText = 'FAIBLE';
+                                    break;
+                                default:
+                                    $badgeText = 'NORMAL';
+                            }
+                        }
+
+                        echo '<span class="stock-badge ' . $finalStatus . '">' . $badgeText . '</span>';
+                        ?>
+                    </span>
+
+                </a>
+            </div>
+        </div>
+
+        <div class="nav-item">
+            <div class="tooltip-wrapper" data-tooltip="Gestion des SKUs et Variantes">
+                <a href="stock_management" class="nav-link" data-page="stock_management">
+                    <span class="nav-icon">
+                        <i class="bi bi-tags"></i>
+                    </span>
+                    <span class="nav-text">VARIANTES</span>
+                </a>
+            </div>
+        </div>
+
+        <div class="nav-item">
+            <div class="tooltip-wrapper" data-tooltip="Inventaire et Niveaux de Stock">
+                <a href="stock_inventory" class="nav-link" data-page="stock_inventory">
+                    <span class="nav-icon">
+                        <i class="bi bi-boxes"></i>
+                    </span>
+                    <span class="nav-text">INVENTAIRE</span>
+                </a>
+            </div>
+        </div>
+
+        <div class="nav-item">
+            <div class="tooltip-wrapper" data-tooltip="Alertes et Rapports Stock">
+                <a href="stock_alerts" class="nav-link" data-page="stock_alerts">
+                    <span class="nav-icon">
+                        <i class="bi bi-bell"></i>
+                    </span>
+                    <span class="nav-text">ALERTES STOCK</span>
+                </a>
+            </div>
+        </div>
+
+        <!-- Section 4: Gestion des Produits -->
+        <div class="nav-section">Produits</div>
+
+        <div class="nav-item">
+            <div class="tooltip-wrapper" data-tooltip="Liste et synchronisation des produits">
                 <a href="items" class="nav-link" data-page="items">
                     <span class="nav-icon">
                         <i class="bi bi-box-seam"></i>
@@ -588,6 +825,9 @@ $initials = getInitials($name);
                 </a>
             </div>
         </div>
+
+        <!-- Section 5: Gestion de Livraison -->
+        <div class="nav-section">Livraison</div>
 
         <div class="nav-item">
             <div class="tooltip-wrapper" data-tooltip="Transporteurs">
@@ -600,6 +840,9 @@ $initials = getInitials($name);
             </div>
         </div>
 
+        <!-- Section 6: Gestion des Clients -->
+        <div class="nav-section">Clients</div>
+
         <div class="nav-item">
             <div class="tooltip-wrapper" data-tooltip="Clients">
                 <a href="clients" class="nav-link" data-page="clients">
@@ -610,6 +853,28 @@ $initials = getInitials($name);
                 </a>
             </div>
         </div>
+
+        <!-- Section 7: AI Confirmations (Only if enabled) -->
+        <?php if ($ai_confirmation_enabled): ?>
+        <div class="nav-section">Intelligence Artificielle</div>
+
+        <div class="nav-item">
+            <div class="tooltip-wrapper" data-tooltip="Suivi des confirmations AI">
+                <a href="ai_confirmations" class="nav-link" data-page="ai_confirmations">
+                    <span class="nav-icon">
+                        <i class="bi bi-robot"></i>
+                    </span>
+                    <span class="nav-text">
+                        AI CONFIRMATIONS
+                        <span class="ai-badge"><i class="bi bi-check-circle-fill" style="font-size: 8px; margin-right: 3px;"></i> ACTIF</span>
+                    </span>
+                </a>
+            </div>
+        </div>
+        <?php endif; ?>
+
+        <!-- Section 8: Personnel -->
+        <div class="nav-section">Personnel</div>
 
         <div class="nav-item">
             <div class="tooltip-wrapper" data-tooltip="Personnel">
@@ -622,6 +887,55 @@ $initials = getInitials($name);
             </div>
         </div>
 
+        <!-- Section 9: Abonnement -->
+        <div class="nav-section">Abonnement</div>
+
+        <div class="nav-item">
+            <div class="tooltip-wrapper" data-tooltip="Gérer votre abonnement">
+                <a href="./subscription" class="nav-link" data-page="subscription">
+                    <span class="nav-icon">
+                        <i class="bi bi-credit-card"></i>
+                    </span>
+                    <span class="nav-text">
+                        ABONNEMENT
+                        <?php
+                        // Display subscription status badge
+                        if (isset($user[0]['subscription_status'])) {
+                            $status = $user[0]['subscription_status'];
+                            $badgeClass = 'subscription-badge ' . $status;
+                            $badgeText = '';
+                            
+                            switch($status) {
+                                case 'active':
+                                    $badgeText = 'ACTIF';
+                                    break;
+                                case 'expired':
+                                    $badgeText = 'EXPIRÉ';
+                                    break;
+                                case 'pending':
+                                    $badgeText = 'EN ATTENTE';
+                                    break;
+                                case 'free':
+                                    $badgeText = 'GRATUIT';
+                                    break;
+                                default:
+                                    $badgeText = strtoupper($status);
+                            }
+                            
+                            echo '<span class="' . $badgeClass . '">' . $badgeText . '</span>';
+                        } else {
+                            // Default badge if status not set
+                            echo '<span class="subscription-badge free">NON DÉFINI</span>';
+                        }
+                        ?>
+                    </span>
+                </a>
+            </div>
+        </div>
+
+        <!-- Section 10: Support -->
+        <div class="nav-section">Support</div>
+
         <div class="nav-item">
             <div class="tooltip-wrapper" data-tooltip="Support">
                 <a href="support" class="nav-link" data-page="support">
@@ -632,6 +946,9 @@ $initials = getInitials($name);
                 </a>
             </div>
         </div>
+
+        <!-- Section 11: Paramètres -->
+        <div class="nav-section">Paramètres</div>
 
         <div class="nav-item">
             <div class="tooltip-wrapper" data-tooltip="Paramètres">
@@ -661,39 +978,6 @@ if ($user[0]['role'] == 'super') {
 } ?>
 
 <script>
-    document.addEventListener('DOMContentLoaded', function() {
-        const STORAGE_KEY = 'obg-ecom-sidebar-state';
-        
-        function getCookie(name) {
-            const nameEQ = name + "=";
-            const ca = document.cookie.split(';');
-            for (let i = 0; i < ca.length; i++) {
-                let c = ca[i];
-                while (c.charAt(0) == ' ') c = c.substring(1, c.length);
-                if (c.indexOf(nameEQ) == 0) return c.substring(nameEQ.length, c.length);
-            }
-            return null;
-        }
-        
-        // Load and apply saved state immediately when DOM is ready (only for desktop)
-        if (window.innerWidth > 768) {
-            const savedState = getCookie(STORAGE_KEY);
-            if (savedState) {
-                try {
-                    const state = JSON.parse(savedState);
-                    if (state.collapsed) {
-                        document.getElementById('sidebar').classList.add('collapsed');
-                        document.getElementById('mainContent').classList.add('expanded');
-                    }
-                } catch (e) {
-                    console.warn('Failed to parse saved state:', e);
-                }
-            }
-        }
-    });
-</script>
-
-<script>
     // Enhanced State Manager with Cookie Support and Mobile Handling
     class SidebarStateManager {
         constructor() {
@@ -710,16 +994,23 @@ if ($user[0]['role'] == 'super') {
             const path = window.location.pathname;
             const filename = path.split('/').pop().split('.')[0];
             
-            // Map PHP files to page identifiers
+            // Map PHP files to page identifiers - INCLUDING AI CONFIRMATIONS
             const pageMap = {
+                'home': 'dashboard',
                 'dashboard': 'dashboard',
                 'orders': 'orders',
+                'stock_overview': 'stock_overview',
+                'stock_management': 'stock_management',
+                'stock_inventory': 'stock_inventory',
+                'stock_alerts': 'stock_alerts',
                 'items': 'items',
                 'transporters': 'transporters',
                 'clients': 'clients',
                 'personnel': 'personnel',
+                'subscription': 'subscription',
                 'support': 'support',
-                'settings': 'settings'
+                'settings': 'settings',
+                'ai_confirmations': 'ai_confirmations'
             };
             
             return pageMap[filename] || 'dashboard';
@@ -853,6 +1144,10 @@ if ($user[0]['role'] == 'super') {
             stateManager.setCollapsed(newCollapsedState);
             applySidebarState();
             
+            // Update toggle button icon
+            const toggleIcon = sidebarToggle.querySelector('i');
+            toggleIcon.style.transform = newCollapsedState ? 'rotate(180deg)' : 'rotate(0deg)';
+            
             console.log('Sidebar toggled:', newCollapsedState ? 'collapsed' : 'expanded');
         }
 
@@ -860,13 +1155,13 @@ if ($user[0]['role'] == 'super') {
         function showMobileSidebar() {
             sidebar.classList.add('mobile-active');
             sidebarOverlay.classList.add('active');
-            document.body.style.overflow = 'hidden'; // Prevent background scrolling
+            document.body.style.overflow = 'hidden';
         }
 
         function hideMobileSidebar() {
             sidebar.classList.remove('mobile-active');
             sidebarOverlay.classList.remove('active');
-            document.body.style.overflow = ''; // Restore scrolling
+            document.body.style.overflow = '';
         }
 
         // Event listeners
@@ -886,7 +1181,7 @@ if ($user[0]['role'] == 'super') {
             sidebarOverlay.addEventListener('click', hideMobileSidebar);
         }
 
-        // Close mobile sidebar when clicking outside (for mobile)
+        // Close mobile sidebar when clicking outside
         document.addEventListener('click', function(e) {
             if (stateManager.isMobile() && 
                 sidebar.classList.contains('mobile-active') &&
@@ -970,40 +1265,9 @@ if ($user[0]['role'] == 'super') {
             console.log('Sidebar state reset to default');
         };
 
-        window.showCurrentState = function() {
-            console.log('Current sidebar state:', stateManager.getState());
-            console.log('Current page from URL:', stateManager.getCurrentPageFromURL());
-            console.log('Is mobile:', stateManager.isMobile());
-            console.log('Cookies:', document.cookie);
-        };
-
-        // Test persistence (desktop only)
-        window.testPersistence = function() {
-            if (stateManager.isMobile()) {
-                console.log('Persistence testing is only available on desktop');
-                return;
-            }
-            
-            console.log('Testing persistence...');
-            
-            // Toggle sidebar
-            toggleSidebar();
-            console.log('After toggle:', stateManager.getState());
-            
-            // Show instructions
-            console.log('Now refresh the page or navigate to another page to test persistence');
-        };
-
-        // Mobile-specific functions
-        window.showMobileSidebar = showMobileSidebar;
-        window.hideMobileSidebar = hideMobileSidebar;
-
         console.log('Enhanced sidebar with mobile support loaded!');
         console.log('Available debug commands:');
-        console.log('- window.showCurrentState() - Show current state');
+        console.log('- window.sidebarStateManager.getState() - Show current state');
         console.log('- window.resetSidebarState() - Reset to default state');
-        console.log('- window.testPersistence() - Test state persistence (desktop only)');
-        console.log('- window.showMobileSidebar() - Show mobile sidebar');
-        console.log('- window.hideMobileSidebar() - Hide mobile sidebar');
     });
 </script>

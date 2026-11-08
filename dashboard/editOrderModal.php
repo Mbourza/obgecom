@@ -697,7 +697,7 @@
 <script>
 
     // Enhanced Edit Order Data Function
-    function editOrderData(orderId) {
+    function editOrder(orderId) {
         currentOrderId = orderId;
         
         // Show modal with animation

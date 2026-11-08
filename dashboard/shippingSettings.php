@@ -1185,6 +1185,77 @@
 
 </style>
 
+<style>
+    .supported-carriers-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+        gap: 12px;
+        padding: 16px;
+        background: #f9fafb;
+        border-radius: 16px;
+        border: 1px solid #e5e7eb;
+    }
+
+    .supported-carrier {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        padding: 12px;
+        background: white;
+        border-radius: 12px;
+        border: 2px solid #e5e7eb;
+        transition: all 0.2s ease;
+        cursor: pointer;
+    }
+
+    .supported-carrier:hover {
+        transform: translateY(-2px);
+        border-color: #3b82f6;
+        box-shadow: 0 4px 12px rgba(59, 130, 246, 0.15);
+        background: #f0f9ff;
+    }
+
+    .supported-carrier.selected {
+        border-color: #3b82f6;
+        background: #eff6ff;
+        box-shadow: 0 4px 12px rgba(59, 130, 246, 0.2);
+    }
+
+    .supported-carrier-logo {
+        width: 48px;
+        height: 48px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin-bottom: 8px;
+    }
+
+    .supported-carrier-logo img,
+    .supported-carrier-logo svg {
+        max-width: 100%;
+        max-height: 100%;
+        object-fit: contain;
+    }
+
+    .supported-carrier-name {
+        font-size: 12px;
+        font-weight: 600;
+        color: #374151;
+        text-align: center;
+        margin-top: 4px;
+    }
+
+    .no-carriers-message {
+        grid-column: 1 / -1;
+        text-align: center;
+        padding: 2rem;
+        color: #6b7280;
+        background: white;
+        border-radius: 12px;
+        font-size: 14px;
+    }
+</style>
+
 <!-- Add/Edit Company Modal -->
 <div id="companyModal" class="modal">
     <div class="modal-content">
@@ -1199,12 +1270,26 @@
                     <label for="company-select">Transporteur <span class="required-asterisk">*</span></label>
                     <select id="company-select" name="company-select" required onchange="handleCarrierChange()">
                         <option value="">Sélectionnez un transporteur</option>
-                        <option value="ozonexpress">OzonExpress</option>
-                        <option value="sendit">Sendit</option>
-                        <option value="chronopost">Chronopost</option>
-                        <option value="forcelog">Forcelog</option>
-                        <option value="cathedis">Cathedis</option>
-                        <option value="power">Power Delivery</option>
+                        <?php
+                        $db = DB::getInstance();
+                        
+                        // Get all active shipping options from database
+                        $query = "SELECT id, name, slug, logo_url, phone, is_active, is_default, fallback_enabled 
+                                FROM shipping_options 
+                                WHERE is_active = 1 
+                                ORDER BY is_default DESC, name ASC";
+                        
+                        $shippingOptions = $db->getThisQuery($query);
+                        
+                        if ($shippingOptions && !empty($shippingOptions)) {
+                            foreach ($shippingOptions as $option) {
+                                $slug = htmlspecialchars($option['slug']);
+                                $name = htmlspecialchars($option['name']);
+                                $isDefault = $option['is_default'] == 1 ? ' (Défaut)' : '';
+                                echo "<option value=\"$slug\" data-phone=\"" . htmlspecialchars($option['phone']) . "\" data-logo=\"" . htmlspecialchars($option['logo_url']) . "\">$name$isDefault</option>";
+                            }
+                        }
+                        ?>
                         <option value="custom">Autre transporteur</option>
                     </select>
                 </div>
@@ -1219,62 +1304,44 @@
                     <input type="text" id="display-name" name="display-name" placeholder="Laissez vide pour utiliser le nom par défaut">
                 </div>
             
-            <div class="form-group">
-                <label>Transporteurs supportés</label>
-                <div class="supported-carriers-grid">
-                    <div class="supported-carrier" data-carrier-id="ozonexpress">
-                        <div class="supported-carrier-logo">
-                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
-                                <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8z"/>
-                                <path d="M12 6c-3.31 0-6 2.69-6 6s2.69 6 6 6 6-2.69 6-6-2.69-6-6-6zm0 10c-2.21 0-4-1.79-4-4s1.79-4 4-4 4 1.79 4 4-1.79 4-4 4z"/>
-                            </svg>
-                        </div>
-                        <div class="supported-carrier-name">OzonExpress</div>
-                    </div>
-                    <div class="supported-carrier" data-carrier-id="sendit">
-                        <div class="supported-carrier-logo">
-                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
-                                <path d="M20 8h-3V4H3c-1.1 0-2 .9-2 2v11h2c0 1.66 1.34 3 3 3s3-1.34 3-3h6c0 1.66 1.34 3 3 3s3-1.34 3-3h2v-5l-3-4zM6 18c-.55 0-1-.45-1-1s.45-1 1-1 1 .45 1 1-.45 1-1 1zm13.5-9l1.96 2.5H17V9h2.5zm-1.5 9c-.55 0-1-.45-1-1s.45-1 1-1 1 .45 1 1-.45 1-1 1z"/>
-                            </svg>
-                        </div>
-                        <div class="supported-carrier-name">Sendit</div>
-                    </div>
-                    <div class="supported-carrier" data-carrier-id="chronopost">
-                        <div class="supported-carrier-logo">
-                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
-                                <path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8z"/>
-                                <path d="M12.5 7H11v6l5.25 3.15.75-1.23-4.5-2.67z"/>
-                            </svg>
-                        </div>
-                        <div class="supported-carrier-name">Chronopost</div>
-                    </div>
-                    <div class="supported-carrier" data-carrier-id="forcelog">
-                        <div class="supported-carrier-logo">
-                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
-                                <path d="M13 10h-2V8h2v2zm0-4h-2V1h2v5zM7 18c-1.1 0-1.99.9-1.99 2S5.9 22 7 22s2-.9 2-2-.9-2-2-2zm10 0c-1.1 0-1.99.9-1.99 2s.89 2 1.99 2 2-.9 2-2-.9-2-2-2zm-8.9-5h7.45c.75 0 1.41-.41 1.75-1.03l3.86-7.01L19.42 4l-3.87 7H8.53L4.27 2H1v2h2l3.6 7.59-1.35 2.44C4.52 15.37 5.48 17 7 17h12v-2H7l1.1-2z"/>
-                            </svg>
-                        </div>
-                        <div class="supported-carrier-name">Forcelog</div>
-                    </div>
-                    <div class="supported-carrier" data-carrier-id="cathedis">
-                        <div class="supported-carrier-logo">
-                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
-                                <path d="M19.5 20.5v-17A1.5 1.5 0 0018 2H6a1.5 1.5 0 00-1.5 1.5v17A1.5 1.5 0 006 22h12a1.5 1.5 0 001.5-1.5zM18 20H6V4h12v16z"/>
-                                <path d="M8 7h8v2H8V7zm0 4h8v2H8v-2zm0 4h5v2H8v-2z"/>
-                            </svg>
-                        </div>
-                        <div class="supported-carrier-name">Cathedis</div>
-                    </div>
-                    <div class="supported-carrier" data-carrier-id="power">
-                        <div class="supported-carrier-logo">
-                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
-                                <path d="M7 2v11h3v9l7-12h-4l4-8z"/>
-                            </svg>
-                        </div>
-                        <div class="supported-carrier-name">Power Delivery</div>
+                <div class="form-group">
+                    <label>Transporteurs supportés</label>
+                    <div class="supported-carriers-grid">
+                        <?php
+                        
+                        if ($shippingOptions && !empty($shippingOptions)) {
+                            foreach ($shippingOptions as $option) {
+                                $slug = htmlspecialchars($option['slug']);
+                                $name = htmlspecialchars($option['name']);
+                                $logoUrl = htmlspecialchars($option['logo_url']);
+                                ?>
+                                <div class="supported-carrier" data-carrier-id="<?php echo $slug; ?>" onclick="handleCarrierSelection('<?php echo $slug; ?>', '<?php echo addslashes($name); ?>')">
+                                    <div class="supported-carrier-logo">
+                                        <?php if (!empty($logoUrl)): ?>
+                                            <img src="<?php echo $logoUrl; ?>" 
+                                                alt="<?php echo $name; ?>" />
+                                        <?php else: ?>
+                                            <?php echo getDefaultCarrierIcon(); ?>
+                                        <?php endif; ?>
+                                    </div>
+                                    <div class="supported-carrier-name"><?php echo $name; ?></div>
+                                </div>
+                                <?php
+                            }
+                        } else {
+                            // Fallback message if no carriers found
+                            echo '<div class="no-carriers-message">Aucun transporteur configuré. Veuillez en ajouter via l\'administration.</div>';
+                        }
+                        
+                        // Helper function to get default icon
+                        function getDefaultCarrierIcon() {
+                            return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" style="width: 32px; height: 32px;">
+                                        <path d="M20 8h-3V4H3c-1.1 0-2 .9-2 2v11h2c0 1.66 1.34 3 3 3s3-1.34 3-3h6c0 1.66 1.34 3 3 3s3-1.34 3-3h2v-5l-3-4zM6 18c-.55 0-1-.45-1-1s.45-1 1-1 1 .45 1 1-.45 1-1 1zm13.5-9l1.96 2.5H17V9h2.5zm-1.5 9c-.55 0-1-.45-1-1s.45-1 1-1 1 .45 1 1-.45 1-1 1z"/>
+                                    </svg>';
+                        }
+                        ?>
                     </div>
                 </div>
-            </div>
 
                 <div class="form-group">
                     <label for="company-api-url">URL de l'API <span class="required-asterisk">*</span></label>
@@ -1301,6 +1368,124 @@
         </div>
     </div>
 </div>
+
+<script>
+    function handleCarrierChange() {
+        const select = document.getElementById('company-select');
+        const customNameGroup = document.getElementById('custom-name-group');
+        const selectedValue = select.value;
+        
+        // Afficher le champ "Nom personnalisé" si "Autre transporteur" est sélectionné
+        if (selectedValue === 'custom') {
+            customNameGroup.style.display = 'block';
+        } else {
+            customNameGroup.style.display = 'none';
+        }
+        
+        // Mettre à jour l'URL de l'API automatiquement pour certains transporteurs
+        const apiUrlInput = document.getElementById('company-api-url');
+        const apiKeyInput = document.getElementById('company-api-key');
+        
+        switch(selectedValue) {
+            case 'quicklivraison':
+                apiUrlInput.value = 'https://clients.quicklivraison.ma/api';
+                apiKeyInput.placeholder = 'Votre clé API QuickLivraison (commence par sub_ pour les sous-utilisateurs)';
+                break;
+            case 'ozonexpress':
+                apiUrlInput.value = 'https://api.ozonexpress.ma';
+                apiKeyInput.placeholder = 'Votre clé API OzonExpress';
+                break;
+            case 'forcelog':
+                apiUrlInput.value = 'https://api.forcelog.ma';
+                apiKeyInput.placeholder = 'Votre clé API ForceLog';
+                break;
+            case 'power':
+                apiUrlInput.value = 'https://elog.ma/apiclient';
+                apiKeyInput.placeholder = 'Votre clé API Power Delivery';
+                break;
+            default:
+                if (selectedValue !== 'custom') {
+                    // Ne pas vider si c'est personnalisé
+                    apiUrlInput.value = '';
+                }
+                apiKeyInput.placeholder = 'Votre clé API';
+        }
+    }
+
+    function closeModal() {
+        const modal = document.getElementById('companyModal');
+        modal.classList.remove('active');
+    }
+
+    function openModal() {
+        const modal = document.getElementById('companyModal');
+        modal.classList.add('active');
+    }
+
+    // Gestionnaire d'événement pour le formulaire
+    document.getElementById('company-form').addEventListener('submit', function(e) {
+        e.preventDefault();
+        
+        const formData = new FormData(this);
+        const companyData = {
+            company_type: formData.get('company-select'),
+            custom_name: formData.get('custom-company-name'),
+            display_name: formData.get('display-name'),
+            api_url: formData.get('api-url'),
+            api_key: formData.get('api-key'),
+            api_secret: formData.get('api-secret')
+        };
+        
+        // Validation
+        if (!companyData.company_type) {
+            alert('Veuillez sélectionner un transporteur');
+            return;
+        }
+        
+        if (companyData.company_type === 'custom' && !companyData.custom_name) {
+            alert('Veuillez entrer un nom personnalisé pour le transporteur');
+            return;
+        }
+        
+        if (!companyData.api_url) {
+            alert('Veuillez entrer l\'URL de l\'API');
+            return;
+        }
+        
+        console.log('Données du transporteur:', companyData);
+        
+        // Envoyer les données au serveur via AJAX
+        fetch('./controllers/save_shipping_company.php', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(companyData)
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                alert('Transporteur ajouté avec succès');
+                closeModal();
+                location.reload(); // Recharger la page pour afficher le nouveau transporteur
+            } else {
+                alert('Erreur: ' + (data.message || 'Impossible d\'ajouter le transporteur'));
+            }
+        })
+        .catch(error => {
+            console.error('Erreur:', error);
+            alert('Une erreur est survenue lors de l\'envoi des données');
+        });
+    });
+    
+    // Fermer le modal en cliquant à l'extérieur
+    window.onclick = function(event) {
+        const modal = document.getElementById('companyModal');
+        if (event.target === modal) {
+            closeModal();
+        }
+    }
+</script>
 
 <script>
 

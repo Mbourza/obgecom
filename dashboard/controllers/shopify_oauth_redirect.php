@@ -1,6 +1,7 @@
 <?php
 session_start();
 header('Content-Type: application/json');
+require_once('./config/e_config.php');
 
 $input = json_decode(file_get_contents('php://input'), true);
 $storeName = $input['store_name'] ?? null;
@@ -11,9 +12,13 @@ if (!$storeName || !$domain) {
     exit;
 }
 
-// Ensure domain is in correct format (e.g., store-name.myshopify.com)
-if (!preg_match('/\.myshopify\.com$/', $domain)) {
-    $domain = $domain . '.myshopify.com';
+// Validate Shopify domain strictly
+if (!preg_match('/^[a-z0-9][a-z0-9\-]*\.myshopify\.com$/i', $domain)) {
+    echo json_encode([
+        'success' => false,
+        'message' => 'Domaine Shopify invalide. Utilisez nom-boutique.myshopify.com'
+    ]);
+    exit;
 }
 
 // Generate a state token for CSRF protection
@@ -23,8 +28,8 @@ $_SESSION['store_name'] = $storeName;
 $_SESSION['store_domain'] = $domain;
 
 // Shopify OAuth URL
-$client_id = "ce2fe15164103b7bcf3e7c4e5770feab";
-$scopes = 'read_products,read_orders,write_orders';
+$client_id = SHOPIFY_CLIENT_ID;
+$scopes = 'read_products,read_orders';
 $redirect_uri = "https://obgecom.com/dashboard/controllers/shopify_callback.php";
 
 $install_url = "https://$domain/admin/oauth/authorize?"

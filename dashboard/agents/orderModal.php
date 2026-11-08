@@ -1554,7 +1554,7 @@
                 if (data.success) {
                     showNotification('Commande créée avec succès!', 'success');
                     closeCreateOrderModal();
-                    // loadOrders(); // Refresh orders list
+                    loadOrders(); // Refresh orders list
                 } else {
                     showNotification(data.message || 'Erreur lors de la création', 'error');
                 }

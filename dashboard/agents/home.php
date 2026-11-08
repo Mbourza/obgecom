@@ -2969,7 +2969,7 @@ $initial_stats = json_decode(getAgentStats($db, $agent_id), true);
         let activeNotifications = new Set();
         let notificationCounter = 0;
 
-        function showNotification(message, type, duration = 5000) {
+        function showNotification(message, type = 'info', duration = 5000) {
             // Create unique notification ID
             const notificationId = `notification_${++notificationCounter}`;
             
@@ -2985,47 +2985,65 @@ $initial_stats = json_decode(getAgentStats($db, $agent_id), true);
                 </button>
             `;
             
-            // Position notification (stack them)
-            const existingNotifications = document.querySelectorAll('.notification');
-            const topOffset = 20 + (existingNotifications.length * 70); // Stack notifications
-            notification.style.top = `${topOffset}px`;
-            
-            // Add to page and track it
+            // Add to page first to get its height
             document.body.appendChild(notification);
+            
+            // Calculate position (stack from top-right)
+            const existingNotifications = Array.from(document.querySelectorAll('.notification:not(.closing)'));
+            let topOffset = 20;
+            
+            // Add up heights of all existing notifications
+            existingNotifications.forEach(existingNote => {
+                const rect = existingNote.getBoundingClientRect();
+                topOffset += rect.height + 10; // 10px gap between notifications
+            });
+            
+            // Set position
+            notification.style.top = `${topOffset}px`;
+            notification.style.right = '20px';
+            
+            // Add fade-in animation
+            setTimeout(() => {
+                notification.classList.add('show');
+            }, 10); // Small delay to ensure DOM is ready
+            
+            // Track it
             activeNotifications.add(notificationId);
             
-            // Auto-remove after specified duration
-            const timeoutId = setTimeout(() => {
-                removeNotification(notificationId);
-            }, duration);
+            // Auto-remove after specified duration (only if duration > 0)
+            if (duration > 0) {
+                const timeoutId = setTimeout(() => {
+                    removeNotification(notificationId);
+                }, duration);
+                
+                // Store timeout ID for potential cancellation
+                notification.dataset.timeoutId = timeoutId;
+            }
             
-            // Store timeout ID for potential cancellation
-            notification.dataset.timeoutId = timeoutId;
-            
-            return notificationId; // Return ID for manual control
+            return notificationId;
         }
 
         function removeNotification(notificationId) {
             const notification = document.getElementById(notificationId);
-            if (notification) {
-                // Clear timeout to prevent double removal
-                if (notification.dataset.timeoutId) {
-                    clearTimeout(parseInt(notification.dataset.timeoutId));
-                }
-                
-                // Add fade-out animation
-                notification.style.opacity = '0';
-                notification.style.transform = 'translateX(100%)';
-                
-                // Remove after animation
-                setTimeout(() => {
-                    if (notification.parentElement) {
-                        notification.remove();
-                        activeNotifications.delete(notificationId);
-                        repositionNotifications();
-                    }
-                }, 300);
+            if (!notification) return;
+            
+            // Clear timeout to prevent double removal
+            if (notification.dataset.timeoutId) {
+                clearTimeout(parseInt(notification.dataset.timeoutId));
             }
+            
+            // Add closing animation class
+            notification.classList.add('closing');
+            notification.classList.remove('show');
+            
+            // Remove after animation completes
+            setTimeout(() => {
+                if (notification.parentElement) {
+                    notification.remove();
+                    activeNotifications.delete(notificationId);
+                    repositionNotifications();
+                }
+            }, 300);
         }
 
         function getNotificationIcon(type) {
@@ -3228,6 +3246,137 @@ $initial_stats = json_decode(getAgentStats($db, $agent_id), true);
                 modal.classList.remove('show');
                 modal.classList.add('hide'); // Optional: for fade-out animation
             }
+        }
+
+        function repositionNotifications() {
+            const notifications = Array.from(document.querySelectorAll('.notification:not(.closing)'));
+            let topOffset = 20;
+            
+            notifications.forEach(notification => {
+                notification.style.top = `${topOffset}px`;
+                const rect = notification.getBoundingClientRect();
+                topOffset += rect.height + 10;
+            });
+        }
+
+        // Add CSS for notifications - UPDATED VERSION
+        const notification2Styles = `
+            .notification {
+                position: fixed;
+                right: 20px;
+                z-index: 99999;
+                background: white;
+                border-radius: 8px;
+                padding: 16px 20px;
+                min-width: 300px;
+                max-width: 400px;
+                box-shadow: 0 6px 20px rgba(0,0,0,0.15);
+                border-left: 4px solid;
+                display: flex;
+                align-items: center;
+                gap: 12px;
+                opacity: 0;
+                transform: translateX(100%);
+                transition: all 0.3s ease;
+                pointer-events: all;
+            }
+            
+            .notification.show {
+                opacity: 1;
+                transform: translateX(0);
+            }
+            
+            .notification.closing {
+                opacity: 0;
+                transform: translateX(100%);
+            }
+            
+            /* Colors for different notification types */
+            .notification.success {
+                border-left-color: #10b981;
+                background: #f0fdf4;
+                color: #065f46;
+            }
+            
+            .notification.error {
+                border-left-color: #ef4444;
+                background: #fef2f2;
+                color: #991b1b;
+            }
+            
+            .notification.warning {
+                border-left-color: #f59e0b;
+                background: #fffbeb;
+                color: #92400e;
+            }
+            
+            .notification.info {
+                border-left-color: #3b82f6;
+                background: #eff6ff;
+                color: #1e40af;
+            }
+            
+            .notification i {
+                font-size: 18px;
+                flex-shrink: 0;
+            }
+            
+            .notification.success i {
+                color: #10b981;
+            }
+            
+            .notification.error i {
+                color: #ef4444;
+            }
+            
+            .notification.warning i {
+                color: #f59e0b;
+            }
+            
+            .notification.info i {
+                color: #3b82f6;
+            }
+            
+            .notification span {
+                flex: 1;
+                font-size: 14px;
+                font-weight: 500;
+                line-height: 1.4;
+            }
+            
+            .notification-close {
+                background: none;
+                border: none;
+                color: #6b7280;
+                font-size: 18px;
+                cursor: pointer;
+                padding: 4px;
+                border-radius: 4px;
+                transition: all 0.2s ease;
+                flex-shrink: 0;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                width: 28px;
+                height: 28px;
+            }
+            
+            .notification-close:hover {
+                background: rgba(0,0,0,0.05);
+                color: #374151;
+            }
+            
+            .notification-close i {
+                font-size: 16px;
+            }
+        `;
+
+        // Add styles to head if not already added
+        if (!document.querySelector('#notification-styles')) {
+            const styleElement = document.createElement('style');
+            styleElement.id = 'notification-styles';
+            styleElement.textContent = notification2Styles;
+            document.head.appendChild(styleElement);
         }
     
     </script>

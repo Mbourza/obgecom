@@ -1,47 +1,106 @@
-<?php if(file_exists(stream_resolve_include_path("../core/init.php"))) {
+<?php
+if(file_exists(stream_resolve_include_path("../core/init.php"))) {
     require_once("../core/init.php");
 }
 
-if ($_POST['action'] === 'get_available_agents') {
+$db = DB::getInstance();
 
-    $db = DB::getInstance();
-    $user_id = getCurrentUserId($db); 
+if(isset($_POST['action'])) {
+    header('Content-Type: application/json');
     
     try {
-        // Get agents that are active and available
-        $agents = $db->getThisQuery("
-            SELECT id, name, phone, email, service_fee, is_active 
-            FROM agents 
-            WHERE user_id = ? AND is_active = 1
-            ORDER BY name ASC
-        ", [$user_id]);
+        $user_id = getCurrentUserId($db);
         
-        echo json_encode([
-            'success' => true,
-            'agents' => $agents
-        ]);
+        if (!$user_id) {
+            echo json_encode(['success' => false, 'message' => 'Utilisateur non authentifié']);
+            exit;
+        }
+        
+        switch ($_POST['action']) {
+            case 'get_agents_with_regions':
+                // Get all regions first
+                $regions = $db->getThisQuery("
+                    SELECT id, name 
+                    FROM regions 
+                    WHERE is_global = 1
+                    ORDER BY name
+                ");
+                
+                // Get agents with region information and performance metrics
+                $agents = $db->getThisQuery("
+                    SELECT 
+                        a.id, a.name, a.phone, a.email,
+                        a.region_id, r.name as region_name,
+                        a.confirmation_rate,
+                        a.score,
+                        (
+                            SELECT COUNT(*) 
+                            FROM agent_order_assignments aoa 
+                            WHERE aoa.agent_id = a.id 
+                            AND aoa.status = 'pending'
+                        ) as current_assignments
+                    FROM agents a
+                    LEFT JOIN regions r ON a.region_id = r.id
+                    WHERE a.user_id = ? 
+                    AND a.is_active = 1
+                    ORDER BY a.name
+                ", [$user_id]);
+                
+                echo json_encode([
+                    'success' => true,
+                    'agents' => $agents,
+                    'regions' => $regions
+                ]);
+                break;
+                
+            case 'get_available_agents':
+                // Simple agent list (for individual assignment modal)
+                $agents = $db->getThisQuery("
+                    SELECT 
+                        a.id, a.name, a.phone, a.email,
+                        a.region_id, r.name as region_name
+                    FROM agents a
+                    LEFT JOIN regions r ON a.region_id = r.id
+                    WHERE a.user_id = ? 
+                    AND a.is_active = 1
+                    ORDER BY a.name
+                ", [$user_id]);
+                
+                echo json_encode([
+                    'success' => true,
+                    'agents' => $agents
+                ]);
+                break;
+                
+            default:
+                echo json_encode([
+                    'success' => false,
+                    'message' => 'Action non reconnue'
+                ]);
+        }
+        
     } catch (Exception $e) {
+        error_log("Get agents error: " . $e->getMessage());
         echo json_encode([
             'success' => false,
-            'message' => 'Erreur: ' . $e->getMessage()
+            'message' => 'Erreur lors du chargement des agents'
         ]);
     }
+    exit;
 }
 
+// Same getCurrentUserId function as above
 function getCurrentUserId($db) {
     if (!isset($_SESSION['user']) || empty($_SESSION['user']['username'])) {
         return null;
     }
 
-    // This can be username, email, or phone
     $identifier = $_SESSION['user']['username'];
 
-    // Prefer explicit ID if available
     if (!empty($_SESSION['user']['id'])) {
         return (int)$_SESSION['user']['id'];
     }
 
-    // Try to match identifier against username, email, or phone
     $user = $db->getThisQuery("
         SELECT id 
         FROM users 

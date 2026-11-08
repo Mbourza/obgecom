@@ -145,8 +145,11 @@
             0% { transform: rotate(0deg); }
             100% { transform: rotate(360deg); }
         }
+        
+        .data-row:hover {
+            background-color: #f8f9fa;
+        }
     </style>
-    
 </head>
 <body>
     <div class="container mt-4">
@@ -176,16 +179,17 @@
                             <i class="bi bi-info-circle"></i>
                             <strong>Instructions:</strong>
                             <ul class="mb-0 mt-2">
-                                <li>Assurez-vous que votre feuille Google Sheets est publique ou partagée</li>
+                                <li>Assurez-vous que votre feuille Google Sheets est publique ou partagée en lecture</li>
                                 <li>La première ligne doit contenir les en-têtes des colonnes</li>
                                 <li>Les données doivent commencer à partir de la deuxième ligne</li>
+                                <li>Utilisez l'URL de publication : Fichier → Partager → Publier sur le web</li>
                             </ul>
                         </div>
                         
                         <div class="mb-3">
                             <label for="sheet-url" class="form-label">URL de la feuille Google Sheets *</label>
                             <input type="url" class="form-control" id="sheet-url" 
-                                   placeholder="https://docs.google.com/spreadsheets/d/your-sheet-id/edit">
+                                   placeholder="https://docs.google.com/spreadsheets/d/your-sheet-id/edit?usp=sharing">
                             <div class="form-text">Collez l'URL complète de votre feuille Google Sheets</div>
                         </div>
                         
@@ -193,10 +197,12 @@
                             <div class="col-md-6">
                                 <label for="sheet-name" class="form-label">Nom de l'onglet</label>
                                 <input type="text" class="form-control" id="sheet-name" value="Sheet1">
+                                <div class="form-text">Généralement "Sheet1", "Feuille 1", etc.</div>
                             </div>
                             <div class="col-md-6">
                                 <label for="start-row" class="form-label">Ligne de début des données</label>
                                 <input type="number" class="form-control" id="start-row" value="2" min="2">
+                                <div class="form-text">Généralement 2 (ligne 1 = en-têtes)</div>
                             </div>
                         </div>
                     </div>
@@ -226,7 +232,7 @@
                         </div>
                         
                         <div class="mt-4">
-                            <h5>Aperçu des données</h5>
+                            <h5>Aperçu des données (premières 5 lignes)</h5>
                             <div class="preview-table">
                                 <table class="table table-sm sample-data-table" id="sample-data-table">
                                     <!-- Sample data will be shown here -->
@@ -238,7 +244,7 @@
                         <button class="btn btn-secondary btn-nav" onclick="previousStep()">
                             <i class="bi bi-arrow-left"></i> Précédent
                         </button>
-                        <button class="btn btn-primary btn-nav" onclick="getPreview()">
+                        <button class="btn btn-primary btn-nav" onclick="validateMapping()">
                             Suivant <i class="bi bi-arrow-right"></i>
                         </button>
                     </div>
@@ -311,12 +317,14 @@
     <script>
         let currentStep = 1;
         let sheetHeaders = [];
+        let sheetData = [];
         let suggestedMapping = {};
         
         // Field definitions with labels and requirements
         const fieldDefinitions = {
+            
             'order_number': { label: 'Numéro de commande *', required: true },
-            'customer_name': { label: 'Nom du client', required: false },
+            'customer_name': { label: 'Nom du client *', required: true },
             'customer_email': { label: 'Email du client', required: false },
             'customer_phone': { label: 'Téléphone du client', required: false },
             'total_amount': { label: 'Montant total', required: false },
@@ -327,9 +335,7 @@
             'products': { label: 'Produits', required: false },
             'shipping_address': { label: 'Adresse de livraison', required: false },
             'billing_address': { label: 'Adresse de facturation', required: false },
-            'notes': { label: 'Notes', required: false },
-            'created_at': { label: 'Date de création', required: false },
-            'updated_at': { label: 'Date de mise à jour', required: false }
+            'notes': { label: 'Notes', required: false }
         };
         
         function showLoading(message = 'Veuillez patienter') {
@@ -355,12 +361,8 @@
         }
         
         function showStep(step) {
-            // Hide all steps
             document.querySelectorAll('.step').forEach(s => s.classList.remove('active'));
-            
-            // Show current step
             document.getElementById(`step-${step}`).classList.add('active');
-            
             currentStep = step;
             updateStepIndicator();
         }
@@ -392,9 +394,8 @@
                 return;
             }
             
-            showLoading('Chargement de la feuille...');
+            showLoading('Connexion à Google Sheets...');
             
-            // Extract sheet ID from URL
             const sheetId = extractSheetId(sheetUrl);
             if (!sheetId) {
                 hideLoading();
@@ -402,10 +403,8 @@
                 return;
             }
             
-            // Simulate API call to get sheet data
-            setTimeout(() => {
-                loadSheetHeaders(sheetId, sheetName, startRow);
-            }, 1500);
+            // Load real data from Google Sheets
+            loadSheetData(sheetId, sheetName, parseInt(startRow));
         }
         
         function extractSheetId(url) {
@@ -413,49 +412,99 @@
             return match ? match[1] : null;
         }
         
-        function loadSheetHeaders(sheetId, sheetName, startRow) {
-            // Simulate loading headers from Google Sheets
-            // In real implementation, this would make an API call
+        async function loadSheetData(sheetId, sheetName, startRow) {
+            try {
+                // Convert Google Sheets to CSV format
+                const csvUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(sheetName)}`;
+                
+                const response = await fetch(csvUrl);
+                if (!response.ok) {
+                    throw new Error('Impossible d\'accéder à la feuille. Vérifiez que la feuille est publique.');
+                }
+                
+                const csvText = await response.text();
+                const rows = parseCSV(csvText);
+                
+                if (rows.length === 0) {
+                    throw new Error('Aucune donnée trouvée dans la feuille');
+                }
+                
+                // Extract headers (first row)
+                sheetHeaders = rows[0];
+                
+                // Extract data starting from specified row
+                sheetData = rows.slice(startRow - 1).filter(row => row.some(cell => cell.trim() !== ''));
+                
+                if (sheetData.length === 0) {
+                    throw new Error('Aucune donnée trouvée à partir de la ligne spécifiée');
+                }
+                
+                generateSuggestedMapping();
+                createColumnMapping();
+                showSampleData();
+                
+                hideLoading();
+                nextStep();
+                
+            } catch (error) {
+                hideLoading();
+                alert('Erreur: ' + error.message);
+                console.error('Error loading sheet:', error);
+            }
+        }
+        
+        function parseCSV(csvText) {
+            const rows = [];
+            let currentRow = [];
+            let inQuotes = false;
+            let currentCell = '';
             
-            // Mock headers for demonstration
-            sheetHeaders = [
-                'Numéro commande',
-                'Nom client',
-                'Email',
-                'Téléphone',
-                'Montant',
-                'Date commande',
-                'Statut',
-                'Produits',
-                'Adresse livraison'
-            ];
+            for (let i = 0; i < csvText.length; i++) {
+                const char = csvText[i];
+                const nextChar = csvText[i + 1];
+                
+                if (char === '"') {
+                    if (inQuotes && nextChar === '"') {
+                        currentCell += '"';
+                        i++; // Skip next quote
+                    } else {
+                        inQuotes = !inQuotes;
+                    }
+                } else if (char === ',' && !inQuotes) {
+                    currentRow.push(currentCell);
+                    currentCell = '';
+                } else if (char === '\n' && !inQuotes) {
+                    currentRow.push(currentCell);
+                    rows.push(currentRow);
+                    currentRow = [];
+                    currentCell = '';
+                } else {
+                    currentCell += char;
+                }
+            }
             
-            // Generate suggested mapping
-            generateSuggestedMapping();
+            // Add last row
+            if (currentCell !== '' || currentRow.length > 0) {
+                currentRow.push(currentCell);
+                rows.push(currentRow);
+            }
             
-            // Create column mapping interface
-            createColumnMapping();
-            
-            // Show sample data
-            showSampleData();
-            
-            hideLoading();
-            nextStep();
+            return rows;
         }
         
         function generateSuggestedMapping() {
             suggestedMapping = {};
             
             const mappingRules = {
-                'order_number': ['numéro', 'commande', 'order', 'number', 'ref'],
-                'customer_name': ['nom', 'client', 'name', 'customer'],
-                'customer_email': ['email', 'mail', 'e-mail'],
-                'customer_phone': ['téléphone', 'phone', 'tel'],
-                'total_amount': ['montant', 'total', 'amount', 'prix'],
-                'order_date': ['date', 'commande', 'order'],
-                'status': ['statut', 'status', 'état'],
-                'products': ['produit', 'product', 'article'],
-                'shipping_address': ['adresse', 'livraison', 'shipping', 'address']
+                'order_number': ['numéro', 'commande', 'order', 'number', 'ref', 'référence', 'id'],
+                'customer_name': ['nom', 'client', 'name', 'customer', 'prénom', 'fullname'],
+                'customer_email': ['email', 'mail', 'e-mail', 'courriel'],
+                'customer_phone': ['téléphone', 'phone', 'tel', 'mobile', 'portable'],
+                'total_amount': ['montant', 'total', 'amount', 'prix', 'price', 'cost'],
+                'order_date': ['date', 'commande', 'order', 'created', 'creation'],
+                'status': ['statut', 'status', 'état', 'state'],
+                'products': ['produit', 'product', 'article', 'item', 'description'],
+                'shipping_address': ['adresse', 'livraison', 'shipping', 'address', 'delivery']
             };
             
             Object.keys(mappingRules).forEach(field => {
@@ -488,26 +537,23 @@
                 const label = document.createElement('label');
                 label.textContent = fieldDef.label;
                 if (fieldDef.required) {
-                    label.style.color = '#dc3545';
+                    label.innerHTML = fieldDef.label + ' <span class="text-danger">*</span>';
                 }
                 
                 const select = document.createElement('select');
                 select.className = 'form-select';
                 select.id = `mapping-${field}`;
                 
-                // Add empty option
                 const emptyOption = document.createElement('option');
                 emptyOption.value = '';
-                emptyOption.textContent = '-- Sélectionner --';
+                emptyOption.textContent = '-- Ignorer cette colonne --';
                 select.appendChild(emptyOption);
                 
-                // Add header options
                 sheetHeaders.forEach(header => {
                     const option = document.createElement('option');
                     option.value = header;
                     option.textContent = header;
                     
-                    // Pre-select if suggested
                     if (suggestedMapping[field] === header) {
                         option.selected = true;
                     }
@@ -524,13 +570,6 @@
         }
         
         function showSampleData() {
-            // Mock sample data
-            const sampleData = [
-                ['CMD001', 'Jean Dupont', 'jean@example.com', '0123456789', '159.99', '2024-01-15', 'En cours', 'Produit A, Produit B', '123 Rue de la Paix'],
-                ['CMD002', 'Marie Martin', 'marie@example.com', '0987654321', '89.50', '2024-01-16', 'Livré', 'Produit C', '456 Avenue des Champs'],
-                ['CMD003', 'Pierre Bernard', 'pierre@example.com', '0147852369', '245.00', '2024-01-17', 'En attente', 'Produit A, Produit D', '789 Boulevard Saint-Michel']
-            ];
-            
             const table = document.getElementById('sample-data-table');
             table.innerHTML = '';
             
@@ -544,22 +583,36 @@
             });
             table.appendChild(headerRow);
             
-            // Create data rows
-            sampleData.forEach(row => {
+            // Show first 5 rows of actual data
+            const displayData = sheetData.slice(0, 5);
+            displayData.forEach(row => {
                 const tr = document.createElement('tr');
                 row.forEach(cell => {
                     const td = document.createElement('td');
-                    td.textContent = cell;
+                    td.textContent = cell || '-';
+                    td.style.maxWidth = '200px';
+                    td.style.overflow = 'hidden';
+                    td.style.textOverflow = 'ellipsis';
+                    td.style.whiteSpace = 'nowrap';
                     tr.appendChild(td);
                 });
                 table.appendChild(tr);
             });
+            
+            if (sheetData.length > 5) {
+                const infoRow = document.createElement('tr');
+                const infoCell = document.createElement('td');
+                infoCell.colSpan = sheetHeaders.length;
+                infoCell.className = 'text-center text-muted';
+                infoCell.textContent = `... et ${sheetData.length - 5} lignes supplémentaires`;
+                infoRow.appendChild(infoCell);
+                table.appendChild(infoRow);
+            }
         }
         
-        function getPreview() {
-            showLoading('Génération de l\'aperçu...');
+        function validateMapping() {
+            showLoading('Validation du mapping...');
             
-            // Validate required fields
             const mapping = getCurrentMapping();
             const missingRequired = [];
             
@@ -575,11 +628,9 @@
                 return;
             }
             
-            setTimeout(() => {
-                generatePreview(mapping);
-                hideLoading();
-                nextStep();
-            }, 1000);
+            generatePreview(mapping);
+            hideLoading();
+            nextStep();
         }
         
         function getCurrentMapping() {
@@ -595,18 +646,23 @@
         
         function generatePreview(mapping) {
             const container = document.getElementById('preview-container');
+            const mappedFields = Object.keys(mapping).filter(field => mapping[field]);
             
-            // Mock preview data based on mapping
-            const previewData = [
-
-                { 'order_number': 'CMD001', 'customer_name': 'Jean Dupont', 'customer_email': 'jean@example.com', 'total_amount': '159.99' },
-                { 'order_number': 'CMD002', 'customer_name': 'Marie Martin', 'customer_email': 'marie@example.com', 'total_amount': '89.50' },
-                { 'order_number': 'CMD003', 'customer_name': 'Pierre Bernard', 'customer_email': 'pierre@example.com', 'total_amount': '245.00' }
-            ];
+            // Transform sheet data using mapping
+            const previewData = sheetData.map(row => {
+                const mappedRow = {};
+                Object.keys(mapping).forEach(field => {
+                    if (mapping[field]) {
+                        const headerIndex = sheetHeaders.indexOf(mapping[field]);
+                        mappedRow[field] = headerIndex !== -1 ? (row[headerIndex] || '') : '';
+                    }
+                });
+                return mappedRow;
+            });
             
             let html = `
                 <div class="alert alert-info">
-                    <strong>Aperçu de ${previewData.length} lignes à importer</strong>
+                    <strong>Aperçu de ${previewData.length} commandes à importer</strong>
                 </div>
                 <div class="table-responsive">
                     <table class="table table-striped table-sm">
@@ -615,63 +671,73 @@
             `;
             
             // Add headers for mapped fields
-            Object.keys(mapping).forEach(field => {
+            mappedFields.forEach(field => {
                 html += `<th>${fieldDefinitions[field].label}</th>`;
             });
             
             html += `</tr></thead><tbody>`;
             
-            // Add preview rows
-            previewData.forEach(row => {
+            // Add preview rows (show first 10)
+            const displayData = previewData.slice(0, 10);
+            displayData.forEach(row => {
                 html += '<tr>';
-                Object.keys(mapping).forEach(field => {
+                mappedFields.forEach(field => {
                     html += `<td>${row[field] || '-'}</td>`;
                 });
                 html += '</tr>';
             });
+            
+            if (previewData.length > 10) {
+                html += `<tr><td colspan="${mappedFields.length}" class="text-center text-muted">... et ${previewData.length - 10} lignes supplémentaires</td></tr>`;
+            }
             
             html += '</tbody></table></div>';
             
             container.innerHTML = html;
         }
         
-        function startImport() {
+        async function startImport() {
             showLoading('Importation en cours...');
             
-            // Simulate import process
-            let progress = 0;
-            const interval = setInterval(() => {
-                progress += Math.random() * 20;
-                if (progress >= 100) {
-                    progress = 100;
-                    clearInterval(interval);
-                    
-                    setTimeout(() => {
-                        completeImport();
-                    }, 500);
+            const mapping = getCurrentMapping();
+            const transformedData = sheetData.map(row => {
+                const mappedRow = {};
+                Object.keys(mapping).forEach(field => {
+                    if (mapping[field]) {
+                        const headerIndex = sheetHeaders.indexOf(mapping[field]);
+                        mappedRow[field] = headerIndex !== -1 ? (row[headerIndex] || '') : '';
+                    }
+                });
+                return mappedRow;
+            });
+            
+            try {
+                const response = await fetch('./controllers/import_orders.php', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        orders: transformedData,
+                        mapping: mapping
+                    })
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    showImportResults(result.data);
+                } else {
+                    throw new Error(result.message || 'Erreur lors de l\'importation');
                 }
                 
-                document.getElementById('loading-message').textContent = 
-                    `Importation en cours... ${Math.round(progress)}%`;
-            }, 300);
-        }
-        
-        function completeImport() {
+            } catch (error) {
+                hideLoading();
+                alert('Erreur: ' + error.message);
+                return;
+            }
+            
             hideLoading();
-            
-            // Mock import results
-            const results = {
-                total: 150,
-                imported: 147,
-                errors: 3,
-                errorDetails: [
-                    'Ligne 45: Email invalide pour la commande CMD045',
-                    'Ligne 78: Montant manquant pour la commande CMD078',
-                    'Ligne 132: Numéro de commande dupliqué CMD089'
-                ]
-            };
-            
-            showImportResults(results);
             nextStep();
         }
         
@@ -715,7 +781,7 @@
                 </div>
             `;
             
-            if (results.errors > 0) {
+            if (results.errors > 0 && results.errorDetails) {
                 html += `
                     <div class="mt-4">
                         <h5>Détail des erreurs</h5>
@@ -740,14 +806,13 @@
         function resetWizard() {
             currentStep = 1;
             sheetHeaders = [];
+            sheetData = [];
             suggestedMapping = {};
             
-            // Reset form
             document.getElementById('sheet-url').value = '';
             document.getElementById('sheet-name').value = 'Sheet1';
             document.getElementById('start-row').value = '2';
             
-            // Clear containers
             document.getElementById('column-mapping-container').innerHTML = '';
             document.getElementById('sample-data-table').innerHTML = '';
             document.getElementById('preview-container').innerHTML = '';

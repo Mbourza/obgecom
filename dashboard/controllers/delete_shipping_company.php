@@ -46,8 +46,6 @@ try {
     }
 
     // Check if company is being used in any orders (optional safety check)
-    // Uncomment if you have an orders table that references shipping companies
-    /*
     $orders_check = "SELECT COUNT(*) as count FROM orders WHERE shipping_company_id = ?";
     $orders_result = $db->getThisQuery($orders_check, [$company_id]);
     
@@ -58,10 +56,6 @@ try {
         ]);
         exit;
     }
-    */
-
-    // Start transaction (if your DB class supports it)
-    // $db->beginTransaction();
 
     // Delete user's shipping settings for this company
     $settings_delete_query = "DELETE FROM shipping_settings WHERE user_id = ? AND shipping_company_id = ?";
@@ -72,18 +66,25 @@ try {
     $company_result = $db->query($company_delete_query, [$company_id]);
 
     if ($company_result) {
-        // Commit transaction (if using transactions)
-        // $db->commit();
+        // Check if user has any remaining shipping companies
+        $remaining_companies_query = "SELECT COUNT(*) as count FROM shipping_companies WHERE user_id = ?";
+        $remaining_companies = $db->getThisQuery($remaining_companies_query, [$user_id]);
+        
+        $has_remaining_companies = !empty($remaining_companies) && $remaining_companies[0]['count'] > 0;
+        // If no shipping companies left, reset onboarding progress
+        if (!$has_remaining_companies) {
+
+            updateOnboardingShippingStep($db, $user_id, 0);
+        }
         
         echo json_encode([
             'success' => true,
             'message' => 'Shipping company deleted successfully',
-            'id' => $company_id
+            'id' => $company_id,
+            'has_remaining_companies' => $has_remaining_companies,
+            'onboarding_reset' => !$has_remaining_companies
         ]);
     } else {
-        // Rollback transaction (if using transactions)
-        // $db->rollback();
-        
         echo json_encode([
             'success' => false,
             'message' => 'Failed to delete shipping company'
@@ -91,14 +92,46 @@ try {
     }
 
 } catch (Exception $e) {
-    // Rollback transaction (if using transactions)
-    // $db->rollback();
-    
     error_log("Error in delete_shipping_company.php: " . $e->getMessage());
     
     echo json_encode([
         'success' => false,
         'message' => 'An error occurred while deleting shipping company'
     ]);
+}
+
+function updateOnboardingShippingStep($db, $user_id, $completed) {
+    try {
+        $current_time = date('Y-m-d H:i:s');
+        
+        // Check if onboarding record exists
+        $existing_onboarding = $db->getThisQuery(
+            "SELECT id FROM user_onboarding WHERE user_id = ?",
+            [$user_id]
+        );
+        
+        if (!empty($existing_onboarding)) {
+            $onboarding_id = $existing_onboarding[0]['id'];
+            
+            $update_data = [
+                'step_shipping' => 0,
+                'completed' => 0,
+                'updated_at' => $current_time
+            ];
+            
+            $updated = $db->update('user_onboarding', $onboarding_id, $update_data);
+            
+            if ($updated) {
+                error_log("Onboarding shipping step updated for user {$user_id}: " . ($completed ? 'completed' : 'not completed'));
+                return true;
+            }
+        }
+        
+        return false;
+        
+    } catch (Exception $e) {
+        error_log("Exception in updateOnboardingShippingStep: " . $e->getMessage());
+        return false;
+    }
 }
 ?>

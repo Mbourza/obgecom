@@ -115,7 +115,7 @@ try {
             'length' => isset($data['dimensions']['length']) ? $data['dimensions']['length'] : 0,
             'width' => isset($data['dimensions']['width']) ? $data['dimensions']['width'] : 0,
             'height' => isset($data['dimensions']['height']) ? $data['dimensions']['height'] : 0,
-            'order_date' => isset($data['created_at']) ? $data['created_at'] : date('Y-m-d H:i:s'),
+            'order_date' => isset($data['created_at']) ? convertToMySQLDatetime($data['created_at']) : date('Y-m-d H:i:s'),
             'platform' => 'manual', // Since this is manually created
             'created_at' => date('Y-m-d H:i:s'),
             'updated_at' => date('Y-m-d H:i:s'),
@@ -193,6 +193,21 @@ try {
         'success' => false,
         'message' => $e->getMessage()
     ]);
+}
+
+function convertToMySQLDatetime($datetime) {
+    if (empty($datetime)) {
+        return date('Y-m-d H:i:s');
+    }
+    
+    try {
+        // Create DateTime object from the input (handles ISO 8601, timestamps, etc.)
+        $date = new DateTime($datetime);
+        return $date->format('Y-m-d H:i:s');
+    } catch (Exception $e) {
+        // If conversion fails, return current datetime
+        return date('Y-m-d H:i:s');
+    }
 }
 
 /**

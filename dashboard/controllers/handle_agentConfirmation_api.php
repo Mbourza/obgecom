@@ -114,7 +114,7 @@ function handleSingleOrderUpdate($db, $agent_id, $agent) {
 
 /**
  * Handle bulk order status update
- */
+*/
 function handleBulkOrderUpdate($db, $agent_id, $agent) {
     $order_ids_json = $_POST['order_ids'] ?? '';
     $new_status = $_POST['status'] ?? '';
@@ -204,7 +204,7 @@ function handleBulkOrderUpdate($db, $agent_id, $agent) {
 
 /**
  * Handle agent confirmation records based on status changes
- */
+*/
 function handleAgentConfirmation($db, $order_id, $agent_id, $agent, $new_status, $old_status) {
 
     $result = ['action' => 'none', 'message' => ''];

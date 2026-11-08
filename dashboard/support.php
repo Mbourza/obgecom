@@ -35,6 +35,14 @@ $subscription = new Subscription($user_id);
 $subscriptionStatus = $subscription->getSubscriptionStatus();
 $subscriptionAlerts = $subscription->getSubscriptionAlerts();
 
+// Initialize onboarding
+$onboarding = new Onboarding($user_id);
+
+$currentPage = basename($_SERVER['PHP_SELF']);
+if (!$onboarding->isOnboardingCompleted() && $currentPage !== 'onboarding') {
+    Redirect::to('./onboarding');
+}
+
 // Vérifier l'accès aux fonctionnalités
 $canAccessFeatures = $subscription->canAccessFeatures();
 
@@ -1276,109 +1284,423 @@ function logout() {
     </main>
 
     <script>
-        // Fonction pour basculer l'affichage des réponses FAQ
-        function toggleHelpFAQ(button) {
-            const answer = button.nextElementSibling;
-            const chevron = button.querySelector('.help-chevron');
+        // ============================================
+        // CENTRE D'AIDE - SCRIPT AMÉLIORÉ
+        // ============================================
+        
+        (function() {
+            'use strict';
             
-            // Fermer tous les autres éléments FAQ
-            document.querySelectorAll('.help-faq-answer').forEach(item => {
-                if (item !== answer) {
-                    item.classList.remove('active');
-                }
-            });
+            // ============================================
+            // GESTION DES FAQ
+            // ============================================
             
-            document.querySelectorAll('.help-chevron').forEach(icon => {
-                if (icon !== chevron) {
-                    icon.classList.remove('rotated');
-                }
-            });
-            
-            // Basculer l'élément actuel
-            answer.classList.toggle('active');
-            chevron.classList.toggle('rotated');
-        }
-
-        // Gérer la navigation par onglets
-        document.querySelectorAll('.help-nav-link').forEach(link => {
-            link.addEventListener('click', function(e) {
-                e.preventDefault();
+            /**
+             * Ouvre tous les éléments FAQ dans une section spécifique
+             * @param {string} sectionId - L'ID de la section
+             */
+            function openAllFAQInSection(sectionId) {
+                const section = document.getElementById(sectionId);
+                if (!section) return;
                 
-                // Supprimer la classe active de tous les liens
-                document.querySelectorAll('.help-nav-link').forEach(l => l.classList.remove('active'));
+                const allQuestions = section.querySelectorAll('.help-faq-question');
+                allQuestions.forEach(question => {
+                    const answer = question.nextElementSibling;
+                    const chevron = question.querySelector('.help-chevron');
+                    
+                    if (answer && !answer.classList.contains('active')) {
+                        answer.classList.add('active');
+                    }
+                    if (chevron && !chevron.classList.contains('rotated')) {
+                        chevron.classList.add('rotated');
+                    }
+                });
+            }
+            
+            /**
+             * Ferme tous les éléments FAQ dans une section spécifique
+             * @param {string} sectionId - L'ID de la section
+             */
+            function closeAllFAQInSection(sectionId) {
+                const section = document.getElementById(sectionId);
+                if (!section) return;
                 
-                // Ajouter la classe active au lien cliqué
-                this.classList.add('active');
+                const allQuestions = section.querySelectorAll('.help-faq-question');
+                allQuestions.forEach(question => {
+                    const answer = question.nextElementSibling;
+                    const chevron = question.querySelector('.help-chevron');
+                    
+                    if (answer && answer.classList.contains('active')) {
+                        answer.classList.remove('active');
+                    }
+                    if (chevron && chevron.classList.contains('rotated')) {
+                        chevron.classList.remove('rotated');
+                    }
+                });
+            }
+            
+            /**
+             * Bascule l'affichage d'un élément FAQ individuel (pour les clics manuels)
+             * @param {HTMLElement} button - Le bouton cliqué
+             */
+            function toggleHelpFAQ(button) {
+                const answer = button.nextElementSibling;
+                const chevron = button.querySelector('.help-chevron');
+                
+                if (!answer || !chevron) return;
+                
+                // Basculer uniquement l'élément actuel (ne ferme pas les autres)
+                answer.classList.toggle('active');
+                chevron.classList.toggle('rotated');
+            }
+            
+            // ============================================
+            // GESTION DE LA NAVIGATION PAR ONGLETS
+            // ============================================
+            
+            /**
+             * Change d'onglet et affiche la section correspondante
+             * @param {string} tabId - L'ID de l'onglet à activer
+             * @param {HTMLElement} clickedLink - Le lien cliqué (optionnel)
+             */
+            function switchTab(tabId, clickedLink = null) {
+                // Mettre à jour les liens actifs
+                const allNavLinks = document.querySelectorAll('.help-nav-link');
+                allNavLinks.forEach(link => {
+                    if (clickedLink && link === clickedLink) {
+                        link.classList.add('active');
+                    } else if (!clickedLink && link.getAttribute('data-tab') === tabId) {
+                        link.classList.add('active');
+                    } else {
+                        link.classList.remove('active');
+                    }
+                });
                 
                 // Masquer toutes les sections
-                document.querySelectorAll('.help-faq-section').forEach(section => {
+                const allSections = document.querySelectorAll('.help-faq-section');
+                allSections.forEach(section => {
                     section.classList.remove('active');
                 });
                 
-                // Afficher la section correspondante
-                const tabId = this.getAttribute('data-tab');
+                // Afficher la section cible
                 const targetSection = document.getElementById(tabId);
                 if (targetSection) {
                     targetSection.classList.add('active');
                     
-                    // Faire défiler jusqu'en haut de la section
-                    window.scrollTo({
-                        top: targetSection.offsetTop - 20,
-                        behavior: 'smooth'
+                    // Ouvrir TOUS les éléments FAQ de la section
+                    openAllFAQInSection(tabId);
+                    
+                    // Défiler jusqu'à la section
+                    setTimeout(() => {
+                        const headerOffset = 100;
+                        const elementPosition = targetSection.getBoundingClientRect().top;
+                        const offsetPosition = elementPosition + window.pageYOffset - headerOffset;
+                        
+                        window.scrollTo({
+                            top: offsetPosition,
+                            behavior: 'smooth'
+                        });
+                    }, 100);
+                }
+            }
+            
+            // Initialiser les écouteurs d'événements pour la navigation
+            function initNavigation() {
+                const navLinks = document.querySelectorAll('.help-nav-link');
+                navLinks.forEach(link => {
+                    link.addEventListener('click', function(e) {
+                        e.preventDefault();
+                        const tabId = this.getAttribute('data-tab');
+                        if (tabId) {
+                            switchTab(tabId, this);
+                        }
+                    });
+                });
+            }
+            
+            // ============================================
+            // GESTION DES ALERTES D'ABONNEMENT
+            // ============================================
+            
+            /**
+             * Ferme une alerte et la stocke en localStorage
+             * @param {HTMLElement} button - Le bouton de fermeture
+             */
+            function closeSubscriptionAlert(button) {
+                const alert = button.closest('.subscription-alert');
+                if (!alert) return;
+                
+                // Animation de disparition
+                alert.style.transition = 'opacity 0.3s ease';
+                alert.style.opacity = '0';
+                
+                setTimeout(() => {
+                    alert.remove();
+                }, 300);
+                
+                // Stocker en localStorage pour 24h
+                const alertType = getAlertType(alert);
+                localStorage.setItem(`subscriptionAlert_${alertType}_dismissed`, Date.now());
+            }
+            
+            /**
+             * Ignore une alerte pour un nombre de jours spécifié
+             * @param {HTMLElement} button - Le bouton d'ignorance
+             * @param {number} days - Nombre de jours à ignorer
+             */
+            function dismissSubscriptionAlert(button, days) {
+                const alert = button.closest('.subscription-alert');
+                if (!alert) return;
+                
+                const alertType = alert.classList.contains('alert-warning') ? 'warning' : 'info';
+                const dismissUntil = Date.now() + (days * 24 * 60 * 60 * 1000);
+                
+                localStorage.setItem(`subscriptionAlert_${alertType}_dismissed`, dismissUntil);
+                
+                // Animation de disparition
+                alert.style.transition = 'opacity 0.3s ease';
+                alert.style.opacity = '0';
+                
+                setTimeout(() => {
+                    alert.remove();
+                }, 300);
+            }
+            
+            /**
+             * Détermine le type d'alerte
+             * @param {HTMLElement} alert - L'élément d'alerte
+             * @returns {string} - Le type d'alerte (danger, warning, info)
+             */
+            function getAlertType(alert) {
+                if (alert.classList.contains('alert-danger')) return 'danger';
+                if (alert.classList.contains('alert-warning')) return 'warning';
+                return 'info';
+            }
+            
+            /**
+             * Filtre les alertes qui ont été ignorées
+             */
+            function filterDismissedAlerts() {
+                const alerts = document.querySelectorAll('.subscription-alert');
+                alerts.forEach(alert => {
+                    const alertType = getAlertType(alert);
+                    const dismissedUntil = localStorage.getItem(`subscriptionAlert_${alertType}_dismissed`);
+                    
+                    if (dismissedUntil && Date.now() < parseInt(dismissedUntil)) {
+                        alert.remove();
+                    }
+                });
+            }
+            
+            // ============================================
+            // RECHERCHE DANS LES FAQ
+            // ============================================
+            
+            /**
+             * Recherche dans les questions FAQ
+             * @param {string} searchTerm - Le terme de recherche
+             */
+            function searchFAQ(searchTerm) {
+                if (!searchTerm || searchTerm.trim() === '') {
+                    // Réinitialiser l'affichage
+                    resetFAQSearch();
+                    return;
+                }
+                
+                const searchLower = searchTerm.toLowerCase().trim();
+                const allQuestions = document.querySelectorAll('.help-faq-question');
+                let hasResults = false;
+                
+                allQuestions.forEach(question => {
+                    const questionText = question.textContent.toLowerCase();
+                    const faqItem = question.closest('.help-faq-item');
+                    const section = question.closest('.help-faq-section');
+                    
+                    if (questionText.includes(searchLower)) {
+                        if (faqItem) faqItem.style.display = '';
+                        hasResults = true;
+                        
+                        // Ouvrir la section parente si elle n'est pas active
+                        if (section && !section.classList.contains('active')) {
+                            const tabId = section.id;
+                            if (tabId) {
+                                switchTab(tabId);
+                            }
+                        }
+                        
+                        // Ouvrir la réponse si elle est fermée
+                        const answer = question.nextElementSibling;
+                        const chevron = question.querySelector('.help-chevron');
+                        if (answer && !answer.classList.contains('active')) {
+                            answer.classList.add('active');
+                        }
+                        if (chevron && !chevron.classList.contains('rotated')) {
+                            chevron.classList.add('rotated');
+                        }
+                    } else {
+                        if (faqItem) faqItem.style.display = 'none';
+                    }
+                });
+                
+                // Afficher un message si aucun résultat
+                showNoResultsMessage(!hasResults);
+            }
+            
+            /**
+             * Réinitialise l'affichage de la recherche
+             */
+            function resetFAQSearch() {
+                const allFaqItems = document.querySelectorAll('.help-faq-item');
+                allFaqItems.forEach(item => {
+                    item.style.display = '';
+                });
+                hideNoResultsMessage();
+            }
+            
+            /**
+             * Affiche ou cache le message "aucun résultat"
+             * @param {boolean} show - Afficher le message ou non
+             */
+            function showNoResultsMessage(show) {
+                let noResultsMsg = document.getElementById('noSearchResults');
+                
+                if (show) {
+                    if (!noResultsMsg) {
+                        noResultsMsg = document.createElement('div');
+                        noResultsMsg.id = 'noSearchResults';
+                        noResultsMsg.className = 'no-results-message';
+                        noResultsMsg.innerHTML = `
+                            <div style="text-align: center; padding: 40px; color: #64748b;">
+                                <i class="fas fa-search" style="font-size: 48px; margin-bottom: 16px; display: block;"></i>
+                                <p>Aucun résultat trouvé pour votre recherche.</p>
+                                <small>Essayez avec d'autres mots-clés</small>
+                            </div>
+                        `;
+                        const activeSection = document.querySelector('.help-faq-section.active');
+                        if (activeSection) {
+                            activeSection.appendChild(noResultsMsg);
+                        }
+                    }
+                    noResultsMsg.style.display = 'block';
+                } else if (noResultsMsg) {
+                    noResultsMsg.style.display = 'none';
+                }
+            }
+            
+            /**
+             * Cache le message "aucun résultat"
+             */
+            function hideNoResultsMessage() {
+                const noResultsMsg = document.getElementById('noSearchResults');
+                if (noResultsMsg) {
+                    noResultsMsg.style.display = 'none';
+                }
+            }
+            
+            /**
+             * Initialise la fonctionnalité de recherche
+             */
+            function initSearch() {
+                const searchInput = document.getElementById('search-input');
+                if (searchInput) {
+                    let searchTimeout;
+                    searchInput.addEventListener('input', function(e) {
+                        clearTimeout(searchTimeout);
+                        searchTimeout = setTimeout(() => {
+                            searchFAQ(e.target.value);
+                        }, 300);
                     });
                 }
-            });
-        });
-
-        // Ouvrir automatiquement la première section au chargement
-        document.addEventListener('DOMContentLoaded', function() {
-            const firstQuestion = document.querySelector('.help-faq-question');
-            if (firstQuestion) {
-                toggleHelpFAQ(firstQuestion);
             }
-        });
-
-        // Fonctions pour les alertes d'abonnement
-        function closeSubscriptionAlert(button) {
-            const alert = button.closest('.subscription-alert');
-            alert.style.opacity = '0';
-            setTimeout(() => {
-                alert.remove();
-            }, 300);
             
-            // Stocker en localStorage pour ne pas réafficher pendant 24h
-            const alertType = alert.classList.contains('alert-danger') ? 'danger' : 
-                            alert.classList.contains('alert-warning') ? 'warning' : 'info';
-            localStorage.setItem(`subscriptionAlert_${alertType}_dismissed`, Date.now());
-        }
-        
-        function dismissSubscriptionAlert(button, days) {
-            const alert = button.closest('.subscription-alert');
-            const alertType = alert.classList.contains('alert-warning') ? 'warning' : 'info';
+            // ============================================
+            // SAUVEGARDE DE L'ONGLET ACTIF
+            // ============================================
             
-            // Stocker en localStorage pour ne pas réafficher pendant X jours
-            const dismissUntil = Date.now() + (days * 24 * 60 * 60 * 1000);
-            localStorage.setItem(`subscriptionAlert_${alertType}_dismissed`, dismissUntil);
+            /**
+             * Sauvegarde l'onglet actif dans localStorage
+             * @param {string} tabId - L'ID de l'onglet
+             */
+            function saveActiveTab(tabId) {
+                localStorage.setItem('helpCenter_activeTab', tabId);
+            }
             
-            alert.style.opacity = '0';
-            setTimeout(() => {
-                alert.remove();
-            }, 300);
-        }
-        
-        // Vérifier si les alertes ont été ignorées
-        document.addEventListener('DOMContentLoaded', function() {
-            const alerts = document.querySelectorAll('.subscription-alert');
-            alerts.forEach(alert => {
-                const alertType = alert.classList.contains('alert-danger') ? 'danger' : 
-                                alert.classList.contains('alert-warning') ? 'warning' : 'info';
-                
-                const dismissedUntil = localStorage.getItem(`subscriptionAlert_${alertType}_dismissed`);
-                if (dismissedUntil && Date.now() < parseInt(dismissedUntil)) {
-                    alert.remove();
+            /**
+             * Restaure l'onglet actif depuis localStorage
+             */
+            function restoreActiveTab() {
+                const savedTab = localStorage.getItem('helpCenter_activeTab');
+                if (savedTab && document.getElementById(savedTab)) {
+                    switchTab(savedTab);
+                } else {
+                    // Onglet par défaut : ouvrir toutes les FAQ de la première section
+                    const firstActiveSection = document.querySelector('.help-faq-section.active');
+                    if (firstActiveSection && firstActiveSection.id) {
+                        openAllFAQInSection(firstActiveSection.id);
+                    } else {
+                        const firstNavLink = document.querySelector('.help-nav-link');
+                        if (firstNavLink) {
+                            firstNavLink.click();
+                        }
+                    }
                 }
-            });
-        });
+            }
+            
+            // ============================================
+            // INITIALISATION
+            // ============================================
+            
+            /**
+             * Initialise tout le script
+             */
+            function init() {
+                // Initialiser la navigation
+                initNavigation();
+                
+                // Initialiser la recherche
+                initSearch();
+                
+                // Filtrer les alertes ignorées
+                filterDismissedAlerts();
+                
+                // Restaurer l'onglet actif ou ouvrir par défaut
+                restoreActiveTab();
+                
+                // Sauvegarder l'onglet actif lors des changements
+                document.querySelectorAll('.help-nav-link').forEach(link => {
+                    link.addEventListener('click', function() {
+                        const tabId = this.getAttribute('data-tab');
+                        if (tabId) {
+                            saveActiveTab(tabId);
+                        }
+                    });
+                });
+                
+                // Ajouter des écouteurs pour les clics sur les questions FAQ
+                document.querySelectorAll('.help-faq-question').forEach(button => {
+                    // Supprimer l'ancien écouteur s'il existe
+                    button.removeEventListener('click', toggleHelpFAQ);
+                    // Ajouter le nouvel écouteur
+                    button.addEventListener('click', function(e) {
+                        e.preventDefault();
+                        toggleHelpFAQ(this);
+                    });
+                });
+            }
+            
+            // Exposer les fonctions globales nécessaires
+            window.toggleHelpFAQ = toggleHelpFAQ;
+            window.closeSubscriptionAlert = closeSubscriptionAlert;
+            window.dismissSubscriptionAlert = dismissSubscriptionAlert;
+            window.searchFAQ = searchFAQ;
+            
+            // Démarrer l'initialisation quand le DOM est prêt
+            if (document.readyState === 'loading') {
+                document.addEventListener('DOMContentLoaded', init);
+            } else {
+                init();
+            }
+        })();
     </script>
 </body>
 </html>

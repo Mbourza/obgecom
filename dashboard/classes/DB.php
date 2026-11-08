@@ -954,4 +954,21 @@ class DB {
     public function count() {
         return $this->_count;
     }
+
+    /**
+     * Get the number of rows affected by the most recent
+     * write query (INSERT / UPDATE / DELETE).
+     *
+     * Every write path in this class already computes
+     * $this->_query->rowCount() and stores it in $this->_count.
+     * This getter exposes it so callers can distinguish
+     * "0 rows matched" from "query failed".
+     *
+     * Read-only. Does not mutate any state.
+     *
+     * @return int Rows affected by the last write query.
+    */
+    public function affectedRows(): int {
+        return (int) $this->_count;
+    }
 }

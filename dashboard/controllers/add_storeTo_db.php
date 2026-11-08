@@ -48,7 +48,7 @@ try {
         }
     }
     
-
+    
     $user_id = getCurrentUserId($db); 
     
     if (!$user_id) {

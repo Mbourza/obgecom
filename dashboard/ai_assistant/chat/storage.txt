@@ -1,0 +1,307 @@
+# OBGEcom Platform Documentation - Smart Knowledge Base
+
+## COMPANY OVERVIEW
+OBGEcom is an e-commerce automation platform based in Morocco that specializes in post-order operations automation. Our mission is to help online sellers save time, reduce errors, and scale their businesses efficiently.
+
+**Company Tagline**: "Built for sellers who dream bigger. Automate orders. Save time. Scale faster."
+**Website**: https://www.obgecom.com
+**Support Email**: support@obgecom.com
+**Support WhatsApp**: +212 7 14 62 06 95
+**Location**: Morocco
+
+## PLATFORM CORE FEATURES
+OBGEcom automates the following post-order operations:
+1. **Order Confirmation** - Automatic confirmation of new orders
+2. **Carrier Assignment** - Intelligent assignment of delivery companies based on rules
+3. **Customer Notifications** - Automated status updates to customers
+4. **Delivery Tracking** - Real-time tracking updates from carriers
+5. **Operations Dashboard** - Centralized view of all order operations
+6. **Multi-Carrier Support** - Work with multiple delivery companies simultaneously
+
+## FREE STARTER PACK - DETAILED INFORMATION
+**Plan Name**: Starter Pack
+**Price**: FREE
+**Limit**: 100 orders TOTAL (not monthly)
+**Credit Card Required**: No
+**Commitment**: None
+
+**Important Rules**:
+- The 100-order limit is a LIFETIME total on the Starter Pack
+- Once you exceed 100 total processed orders, you must upgrade to continue
+- No monthly reset - the counter continues until you upgrade
+- Users receive notifications as they approach the limit
+- Upgrade is seamless - no service interruption during transition
+
+**Purpose**: The Starter Pack allows merchants to:
+- Test OBGEcom in real production conditions
+- Experience time savings from automation
+- Validate ROI before committing to paid plan
+- Connect their store and carrier risk-free
+
+## SUPPORTED E-COMMERCE PLATFORMS
+OBGEcom integrates with:
+- **Shopify** (Full integration available)
+- **YouCan** (Full integration available) 
+- **WooCommerce** (Full integration available)
+- **Other platforms** (Custom integration possible via API)
+
+**Integration Time**: Less than 10 minutes for standard platforms
+**Setup Process**:
+1. Create OBGEcom account
+2. Connect your e-commerce store
+3. Configure automation rules
+4. Connect delivery carriers
+5. Activate automation
+
+## CARRIER INTEGRATION SYSTEM
+### Supported Carriers
+- All major Moroccan delivery companies
+- International carriers with API access
+- Custom carrier integration available
+
+### Carrier Integration Process
+1. **If carrier is listed**: Direct connection from dashboard
+2. **If carrier is not listed**: 
+   - Request API key/documentation from carrier
+   - Send to OBGEcom support
+   - Integration completed within 24 hours
+
+### Carrier Message Template
+Use this template to request API access from your carrier: 'Hello,
+We are using OBGEcom to automate our order management and delivery tracking.
+Could you please provide your API documentation or an API key so we can integrate your service?
+This will help streamline our delivery operations.
+Thank you'
+
+
+## PRICING STRUCTURE
+### Current Plans (Post-Starter)
+1. **Starter**: Free (0-100 orders total)
+2. **Basic**: For growing businesses
+3. **Professional**: For scaling businesses  
+4. **Enterprise**: For large operations
+
+**Pricing Factors**:
+- Monthly order volume
+- Number of connected stores
+- Number of carriers needed
+- Advanced features required
+
+**Upgrade Process**:
+- Automatic notification at 80+ orders
+- Multiple reminder emails
+- Dashboard upgrade prompts
+- No service interruption during upgrade
+
+## CUSTOMER SUPPORT
+### Channels
+- **WhatsApp**: +212 7 14 62 06 95 (Business hours)
+- **Email**: support@obgecom.com (24/7)
+- **Dashboard**: In-app support chat
+- **Documentation**: Comprehensive help center
+
+### Response Times
+- **Critical Issues**: < 1 hour
+- **Integration Requests**: < 24 hours
+- **General Questions**: < 4 business hours
+- **Feature Requests**: Voted on monthly
+
+## COMMON USE CASES
+
+### For New E-commerce Businesses
+1. Start with free Starter Pack
+2. Connect Shopify/YouCan/WooCommerce store
+3. Set up local carrier
+4. Automate first 100 orders
+5. Evaluate time savings and upgrade
+
+### For Growing Businesses
+1. Import existing order history
+2. Connect multiple carriers for different regions
+3. Set up automated customer notifications
+4. Use dashboard for operations monitoring
+5. Scale seamlessly as order volume grows
+
+### For Established Businesses
+1. Connect multiple stores
+2. Implement multi-carrier strategies
+3. Automate complex fulfillment rules
+4. Generate operations reports
+5. Optimize delivery performance
+
+## FREQUENTLY ASKED QUESTIONS
+
+### General Questions
+**Q: Is OBGEcom only for Moroccan businesses?**
+A: While we're based in Morocco, OBGEcom works with businesses worldwide. Our platform supports international carriers and multiple currencies.
+
+**Q: Do I need technical skills to use OBGEcom?**
+A: No technical skills needed! Our platform is designed for business owners. The setup is guided and most integrations are one-click.
+
+**Q: Can I use OBGEcom with multiple stores?**
+A: Yes! All plans (including paid ones) support multiple store connections. The Starter Pack allows one store connection.
+
+### Technical Questions
+**Q: What happens if the API goes down?**
+A: We have 99.9% uptime SLA. If issues occur, orders are queued and processed automatically when service resumes. Email notifications are sent for any service disruptions.
+
+**Q: Can I customize the customer notifications?**
+A: Yes! All email and SMS notifications are fully customizable with your branding and messaging.
+
+**Q: Does OBGEcom support webhooks?**
+A: Yes, we provide webhooks for order status updates, delivery tracking, and other events.
+
+### Billing Questions
+**Q: When am I billed for paid plans?**
+A: Monthly billing, prorated for mid-month upgrades. No annual commitments required.
+
+**Q: Can I downgrade my plan?**
+A: Yes, you can downgrade at any time. Changes take effect at the next billing cycle.
+
+**Q: Are there setup fees?**
+A: No setup fees for any plan. The Starter Pack is completely free.
+
+## SALES CONVERSION FLOW
+
+### Lead Qualification Questions
+1. **Platform**: Which e-commerce platform do you use?
+2. **Monthly Orders**: How many orders do you process monthly?
+3. **Carrier**: Which delivery companies do you currently use?
+4. **Pain Points**: What's your biggest challenge with order management?
+
+### Objection Handling
+**Objection**: "I manage orders manually and it works fine."
+**Response**: Manual management works until you scale. Every 100 orders manually managed takes approximately 8-10 hours. OBGEcom reduces this to 1 hour while eliminating errors.
+
+**Objection**: "It's too expensive."
+**Response**: The Starter Pack is completely free for your first 100 orders. This lets you calculate exact ROI. Most users save 7+ hours weekly, making the paid plan cost-effective.
+
+**Objection**: "I'm worried about integration complexity."
+**Response**: Our average setup time is 9 minutes. We provide step-by-step guidance and 24-hour integration support for carriers.
+
+## ONBOARDING PROCESS
+### Day 1
+1. Account creation (2 minutes)
+2. Store connection (3 minutes)
+3. Basic automation setup (4 minutes)
+
+### First Week
+1. Carrier integration
+2. Notification customization
+3. Team member invitations (if needed)
+
+### First Month
+1. Performance review
+2. Rule optimization
+3. Advanced feature adoption
+
+## SUCCESS METRICS
+### What Users Achieve
+- **Time Savings**: 7-10 hours per 100 orders
+- **Error Reduction**: 95% fewer shipping mistakes
+- **Customer Satisfaction**: 40% faster response times
+- **Scalability**: Handle 3x order volume without additional staff
+
+### Case Study Results
+**Fashion Store (Marrakech)**:
+- Before: 15 hours/week on order management
+- After: 2 hours/week with OBGEcom
+- Result: Grew from 50 to 200 orders/month without hiring
+
+**Electronics Retailer (Casablanca)**:
+- Before: 12% order errors
+- After: 1% order errors with OBGEcom
+- Result: Customer complaints reduced by 85%
+
+## TROUBLESHOOTING GUIDE
+
+### Common Issues & Solutions
+**Issue**: "My orders aren't importing"
+**Solution**: Check API credentials and re-authenticate connection. Ensure your store has the latest OBGEcom app installed.
+
+**Issue**: "Carrier assignments are incorrect"
+**Solution**: Review your assignment rules in Settings > Automation Rules. Test with sample orders.
+
+**Issue**: "Notifications not sending"
+**Solution**: Verify email/SMS settings. Check spam folder. Test with the "Send Test" button.
+
+**Issue**: "Dashboard showing incorrect counts"
+**Solution**: Click "Sync Now" in dashboard. Wait 2 minutes for data refresh.
+
+## BEST PRACTICES
+
+### For Maximum Efficiency
+1. **Setup**: Complete all setup steps in one session (10 minutes)
+2. **Rules**: Create carrier assignment rules based on weight, destination, and cost
+3. **Notifications**: Customize templates to match your brand voice
+4. **Team**: Invite team members with appropriate permissions
+5. **Review**: Weekly check of dashboard metrics
+
+### Avoiding Common Mistakes
+1. Don't skip carrier setup - do this immediately after store connection
+2. Don't use generic notification templates - customize for better engagement
+3. Don't ignore the 80-order warning - plan your upgrade
+4. Don't manually override automated processes - trust the system
+
+## UPGRADE PATHS
+
+### From Starter to Paid Plans
+**Trigger**: 80+ orders processed
+**Timeline**: 
+- 80 orders: First warning email
+- 90 orders: Second warning + dashboard notification
+- 95 orders: Final warning + upgrade link
+- 100 orders: Automation pauses until upgrade
+
+**Upgrade Options**:
+1. **Basic Plan**: 101-500 orders/month, 1-2 stores, 1-3 carriers
+2. **Professional Plan**: 501-2000 orders/month, 3-5 stores, multiple carriers
+3. **Enterprise Plan**: 2000+ orders/month, unlimited stores/carriers, custom features
+
+## SECURITY & COMPLIANCE
+- **Data Encryption**: All data encrypted in transit and at rest
+- **GDPR Compliance**: Full compliance with data protection regulations
+- **Access Control**: Role-based permissions for team members
+- **Audit Logs**: Complete history of all system actions
+- **Regular Backups**: Daily automated backups of all data
+
+## API DOCUMENTATION SUMMARY
+### Available Endpoints
+- Orders: Create, read, update, delete
+- Carriers: List available, integrate new
+- Stores: Connect, disconnect, sync
+- Notifications: Configure, send, track
+- Analytics: Get reports, metrics, insights
+
+### Authentication
+- API key required for all endpoints
+- Keys generated in dashboard > Settings > API
+- Rate limiting: 100 requests/minute
+- Webhook verification for incoming calls
+
+## RELEASE NOTES & UPDATES
+### Recent Improvements
+- **Jan 2024**: Enhanced carrier matching algorithms
+- **Dec 2023**: Added YouCan platform integration
+- **Nov 2023**: Improved notification delivery system
+- **Oct 2023**: Redesigned dashboard for better UX
+
+### Coming Soon
+- Mobile app for order management on-the-go
+- Advanced analytics and forecasting
+- Multi-language support (French, Arabic, English)
+- Marketplace integrations (Amazon, Etsy, etc.)
+
+## GLOSSARY OF TERMS
+- **Carrier**: Delivery or shipping company
+- **Post-order**: Operations after a customer places an order
+- **Automation Rules**: Logic for processing orders automatically
+- **Webhook**: Automated messages sent between apps
+- **API**: Application Programming Interface
+- **Dashboard**: OBGEcom control panel
+- **Starter Pack**: Free trial plan (100 orders total)
+
+---
+
+*Last Updated: 2026-01-04 | For internal use and AI training only*
+*This documentation powers the OBGEcom AI Assistant*

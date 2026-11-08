@@ -31,6 +31,7 @@ if (isset($_GET['order_id'])) {
                 'customer_phone' => $order->customer_phone,
                 'customer_email' => $order->customer_email,
                 'shipping_address' => $order->shipping_address,
+                'shipping_cost' => $order->shipping_cost,
                 'shipping_city' => $order->customer_ville,
                 'status' => $order->status,
                 'total_amount' => $order->total_amount,

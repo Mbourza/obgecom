@@ -37,6 +37,14 @@ $subscription = new Subscription($user_id);
 $subscriptionStatus = $subscription->getSubscriptionStatus();
 $subscriptionAlerts = $subscription->getSubscriptionAlerts();
 
+// Initialize onboarding
+$onboarding = new Onboarding($user_id);
+
+$currentPage = basename($_SERVER['PHP_SELF']);
+if (!$onboarding->isOnboardingCompleted() && $currentPage !== 'onboarding') {
+    Redirect::to('./onboarding');
+}
+
 // Vérifier l'accès aux fonctionnalités
 $canAccessFeatures = $subscription->canAccessFeatures();
 

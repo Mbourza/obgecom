@@ -100,6 +100,9 @@ try {
     $name = trim($_POST['name']);
     $email = trim($_POST['email']);
     $password = trim($_POST['password']);
+    $team_id = isset($_POST['team_id']) ? trim($_POST['team_id']) : '';
+    $responsable_id = isset($_POST['responsable_id']) ? trim($_POST['responsable_id']) : '';
+    $region = isset($_POST['region_id']) ? trim($_POST['region_id']) : '';
     $phone = isset($_POST['phone']) ? trim($_POST['phone']) : '';
     $isActive = isset($_POST['is_active']) ? intval($_POST['is_active']) : 1;
     
@@ -186,27 +189,34 @@ try {
                         name,
                         email,
                         password,
+                        region_id,
                         phone,
                         service_fee,
                         is_active,
                         created_at,
-                        updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), NOW())";
+                        updated_at,
+                        team_id,
+                        responsable_id
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW(), ?, ?)";
     
     $insertParams = [
         $user_id,
         $name,
         $email,
         $hashed_password,
+        $region,
         $phone,
         $serviceFee,
-        $isActive
+        $isActive,
+        $team_id,
+        $responsable_id
     ];
     
+
     // Execute insert query
     $result = $db->getThisQuery($insertQuery, $insertParams);
-    
     // Check if insert was successful
+    
     if ($result !== false) {
         // Get the ID of the newly inserted agent
         $newAgentId = $db->getLastInsertId();
@@ -218,6 +228,7 @@ try {
                                     user_id,
                                     name,
                                     email,
+                                    region_id,
                                     phone,
                                     service_fee,
                                     is_active,
@@ -240,6 +251,7 @@ try {
                     'user_id' => $agentData['user_id'],
                     'name' => $agentData['name'],
                     'email' => $agentData['email'],
+                    'region' => $agentData['region_id'],
                     'phone' => $agentData['phone'],
                     'service_fee' => $agentData['service_fee'],
                     'is_active' => $agentData['is_active'],

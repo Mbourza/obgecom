@@ -1,5 +1,5 @@
 <?php
-// filter_orders.php - Fixed version with debugging
+// filter_orders.php - Updated version with region/city filters
 if(file_exists(stream_resolve_include_path("../core/init.php"))) {
     require_once("../core/init.php");
 }
@@ -55,6 +55,26 @@ $params = [$user_id];
 // Apply filters
 $conditions = [];
 
+// Region filter - NEW
+if (!empty($input['region_id']) && is_numeric($input['region_id'])) {
+    // Get cities in this region
+    $cities_query = "SELECT name FROM cities WHERE region_id = ?";
+    $cities = $db->getThisQuery($cities_query, [intval($input['region_id'])]);
+    
+    if (!empty($cities)) {
+        $city_names = array_column($cities, 'name');
+        $placeholders = implode(',', array_fill(0, count($city_names), '?'));
+        $conditions[] = "o.customer_ville IN ($placeholders)";
+        $params = array_merge($params, $city_names);
+    }
+}
+
+// City filter - NEW
+if (!empty($input['city'])) {
+    $conditions[] = "o.customer_ville = ?";
+    $params[] = $input['city'];
+}
+
 // Confirmation status filter
 if (!empty($input['confirmation_status'])) {
     $conditions[] = "o.status = ?";
@@ -67,20 +87,21 @@ if (!empty($input['shipping_status'])) {
     $params[] = $input['shipping_status'];
 }
 
-// Agent filter
-if (!empty($input['agent_id'])) {
-    $conditions[] = "aoa.agent_id = ?";
-    $params[] = $input['agent_id'];
+// Store filter
+if (!empty($input['store_id']) && is_numeric($input['store_id'])) {
+    $conditions[] = "o.store_id = ?";
+    $params[] = intval($input['store_id']);
 }
 
-// Assignment status filter
-if (!empty($input['assignment_status'])) {
-    if ($input['assignment_status'] === 'unassigned') {
-        $conditions[] = "aoa.agent_id IS NULL";
-    } else {
-        $conditions[] = "aoa.status = ?";
-        $params[] = $input['assignment_status'];
-    }
+// Amount filters - NEW
+if (!empty($input['min_amount']) && is_numeric($input['min_amount'])) {
+    $conditions[] = "o.total_amount >= ?";
+    $params[] = floatval($input['min_amount']);
+}
+
+if (!empty($input['max_amount']) && is_numeric($input['max_amount'])) {
+    $conditions[] = "o.total_amount <= ?";
+    $params[] = floatval($input['max_amount']);
 }
 
 // Date range filter
@@ -106,15 +127,15 @@ if (!empty($input['date_range'])) {
                 $conditions[] = "DATE(o.created_at) BETWEEN ? AND ?";
                 $params[] = $input['start_date'];
                 $params[] = $input['end_date'];
+            } elseif (!empty($input['start_date'])) {
+                $conditions[] = "DATE(o.created_at) >= ?";
+                $params[] = $input['start_date'];
+            } elseif (!empty($input['end_date'])) {
+                $conditions[] = "DATE(o.created_at) <= ?";
+                $params[] = $input['end_date'];
             }
             break;
     }
-}
-
-// Store filter
-if (!empty($input['store_id']) && is_numeric($input['store_id'])) {
-    $conditions[] = "o.store_id = ?";
-    $params[] = intval($input['store_id']);
 }
 
 // Search filter
@@ -124,8 +145,10 @@ if (!empty($input['search'])) {
                       OR LOWER(o.customer_email) LIKE ? 
                       OR LOWER(o.customer_phone) LIKE ? 
                       OR LOWER(o.customer_ville) LIKE ? 
-                      OR LOWER(o.order_number) LIKE ?)";
+                      OR LOWER(o.order_number) LIKE ?
+                      OR LOWER(o.tracking_number) LIKE ?)";
 
+    $params[] = $search_term;
     $params[] = $search_term;
     $params[] = $search_term;
     $params[] = $search_term;
@@ -141,13 +164,13 @@ if (!empty($conditions)) {
 // Add ordering
 $query .= " ORDER BY o.created_at DESC";
 
-// Add limit if needed (for performance)
+// Add limit for performance
 $query .= " LIMIT 1000";
 
 try {
     // Debug: Log the query and parameters
-    error_log("Query: " . $query);
-    error_log("Params: " . print_r($params, true));
+    error_log("Filter Query: " . $query);
+    error_log("Filter Params: " . print_r($params, true));
     
     // Get orders using your DB class
     $orders = $db->getThisQuery($query, $params);
@@ -165,10 +188,14 @@ try {
     // Generate HTML for orders table
     $html = generateOrdersTableHTML($orders);
     
+    // Get statistics for the filtered results
+    $stats = getFilteredStats($db, $user_id, $conditions, $params);
+    
     echo json_encode([
         'success' => true,
         'html' => $html,
         'count' => count($orders),
+        'stats' => $stats,
         'debug' => [
             'user_id' => $user_id,
             'input' => $input,
@@ -187,6 +214,77 @@ try {
             'trace' => $e->getTraceAsString()
         ]
     ]);
+}
+
+function getFilteredStats($db, $user_id, $conditions = [], $params = []) {
+    $stats_query = "SELECT 
+            COUNT(DISTINCT o.id) as total_orders,
+            
+            -- Count orders confirmed by us (store status)
+            COUNT(DISTINCT CASE WHEN o.status = 'confirmed' THEN o.id END) as confirmed_by_us,
+            
+            -- Count orders confirmed by shipping company
+            COUNT(DISTINCT CASE WHEN o.shipping_status = 'delivered' THEN o.id END) as confirmed_by_shipping,
+            
+            -- Count orders cancelled by us (store status)
+            COUNT(DISTINCT CASE WHEN o.status = 'cancelled' THEN o.id END) as cancelled_by_us,
+            
+            -- Count orders cancelled by shipping company
+            COUNT(DISTINCT CASE WHEN o.shipping_status IN ('returned_to_sender', 'cancelled') THEN o.id END) as cancelled_by_shipping,
+            
+            -- Total revenue from delivered orders
+            SUM(CASE WHEN o.shipping_status = 'delivered' THEN o.total_amount ELSE 0 END) as total_revenue,
+            
+            -- Currency
+            (SELECT o2.currency FROM orders o2 WHERE o2.user_id = ? GROUP BY o2.currency ORDER BY COUNT(*) DESC LIMIT 1) as currency
+            
+            FROM orders o 
+            LEFT JOIN agent_order_assignments aoa ON o.id = aoa.order_id AND aoa.user_id = o.user_id
+            WHERE o.user_id = ?";
+    
+    // Add any additional conditions
+    $stats_params = [$user_id, $user_id];
+    
+    if (!empty($conditions)) {
+        // Remove "WHERE" clause from conditions array and add them to query
+        $stats_query .= " AND " . implode(" AND ", $conditions);
+        
+        // Add the parameters (skip the first user_id param which is already in stats_params)
+        foreach ($params as $param) {
+            $stats_params[] = $param;
+        }
+    }
+    
+    try {
+        $stats_result = $db->getThisQuery($stats_query, $stats_params);
+        
+        if (!empty($stats_result)) {
+            $stats_data = $stats_result[0];
+            
+            return [
+                'total_orders' => $stats_data['total_orders'] ?? 0,
+                'confirmed_by_us' => $stats_data['confirmed_by_us'] ?? 0,
+                'confirmed_by_shipping' => $stats_data['confirmed_by_shipping'] ?? 0,
+                'cancelled_by_us' => $stats_data['cancelled_by_us'] ?? 0,
+                'cancelled_by_shipping' => $stats_data['cancelled_by_shipping'] ?? 0,
+                'total_revenue' => $stats_data['total_revenue'] ?? 0,
+                'currency' => $stats_data['currency'] ?? 'MAD'
+            ];
+        }
+    } catch (Exception $e) {
+        error_log("Stats error: " . $e->getMessage());
+    }
+    
+    // Return default stats if query fails
+    return [
+        'total_orders' => 0,
+        'confirmed_by_us' => 0,
+        'confirmed_by_shipping' => 0,
+        'cancelled_by_us' => 0,
+        'cancelled_by_shipping' => 0,
+        'total_revenue' => 0,
+        'currency' => 'MAD'
+    ];
 }
 
 function generateOrdersTableHTML($orders) {
@@ -220,7 +318,7 @@ function generateOrdersTableHTML($orders) {
     ];
     
     $confirmation_options = [
-        'pending' => 'En attente',
+        'new-order' => 'Nouvelle commande',
         'confirmed' => 'Confirmée',
         'no-answer' => 'Pas de réponse',
         'busy' => 'Occupé',
@@ -334,13 +432,13 @@ function generateOrdersTableHTML($orders) {
         $html .= '<td class="confirmation-cell">';
         $html .= '<select class="confirmation-select" data-order-id="' . htmlspecialchars($order['id']) . '" onchange="updateConfirmationStatus(this)">';
         
-        $current_status = $order['status'] ?? 'pending';
+        $current_status = $order['status'] ?? 'new-order';
         
         foreach ($confirmation_options as $value => $label) {
             $selected = ($current_status === $value) ? 'selected' : '';
             $style = "background-color: ";
             switch($value) {
-                case 'pending': $style .= "#f8f9fa; color: #495057;"; break;
+                case 'new-order': $style .= "#cce5ff; color: #004085;"; break;
                 case 'confirmed': $style .= "#d4edda; color: #155724;"; break;
                 case 'no-answer': $style .= "#fff3cd; color: #856404;"; break;
                 case 'busy': $style .= "#ffe8cc; color: #804d00;"; break;
@@ -416,12 +514,31 @@ function generateOrdersTableHTML($orders) {
         $html .= '</svg>';
         $html .= 'Voir';
         $html .= '</button>';
-        $html .= '<button onclick="editOrderStatus(' . $order['id'] . ')" title="Modifier statut">';
+        $html .= '<button onclick="editOrderData(' . $order['id'] . ')" title="Modifier statut">';
         $html .= '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 16 16">';
         $html .= '<path d="M12.146.146a.5.5 0 0 1 .708 0l3 3a.5.5 0 0 1 0 .708L10.5 8.207l-3-3L12.146.146zM11.207 9.5L7 13.707V10.5a.5.5 0 0 1 .5-.5h3.707zM10.5 11.207L6.293 7 .854 12.439a.5.5 0 0 0-.146.353V15.5a.5.5 0 0 0 .5.5h2.707a.5.5 0 0 0 .354-.146L10.5 11.207z"/>';
         $html .= '</svg>';
         $html .= 'Modifier';
         $html .= '</button>';
+        
+        // Assign/Reassign button based on agent status
+        if (empty($order['agent_name'])) {
+            $html .= '<button onclick="assignAgent(' . $order['id'] . ')" title="Assigner un agent">';
+            $html .= '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 16 16">';
+            $html .= '<path d="M8 8a3 3 0 1 0 0-6 3 3 0 0 0 0 6zm2-3a2 2 0 1 1-4 0 2 2 0 0 1 4 0zm4 8c0 1-1 1-1 1H3s-1 0-1-1 1-4 6-4 6 3 6 4zm-1-.004c-.001-.246-.154-.986-.832-1.664C11.516 10.68 10.289 10 8 10c-2.29 0-3.516.68-4.168 1.332-.678.678-.83 1.418-.832 1.664h10z"/>';
+            $html .= '</svg>';
+            $html .= 'Assigner';
+            $html .= '</button>';
+        } else {
+            $html .= '<button onclick="reassignAgent(' . $order['id'] . ')" title="Réassigner">';
+            $html .= '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 16 16">';
+            $html .= '<path d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.417A6 6 0 1 1 8 2v1z"/>';
+            $html .= '<path d="M8 4.466V.534a.25.25 0 0 1 .41-.192l2.36 1.966c.12.1.12.284 0 .384L8.41 4.658A.25.25 0 0 1 8 4.466z"/>';
+            $html .= '</svg>';
+            $html .= 'Réassigner';
+            $html .= '</button>';
+        }
+        
         $html .= '<button class="delete-btn" onclick="deleteOrder(' . $order['id'] . ')" title="Supprimer">';
         $html .= '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 16 16">';
         $html .= '<path d="M5.5 5.5A.5.5 0 0 1 6 6v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm2.5 0a.5.5 0 0 1 .5.5v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm3 .5a.5.5 0 0 0-1 0v6a.5.5 0 0 0 1 0V6z"/>';
@@ -469,28 +586,3 @@ function getCurrentUserId($db) {
 
     return null;
 }
-
-/**
- * Alternative function to get detailed order items for a specific order
- */
-function getOrderItemsDetails($db, $order_id) {
-    $query = "SELECT * FROM order_items WHERE order_id = ? ORDER BY id";
-    return $db->getThisQuery($query, [$order_id]);
-}
-
-/**
- * Get order summary with total weight and dimensions
- */
-function getOrderSummary($db, $order_id) {
-    $query = "SELECT 
-                COUNT(*) as total_items,
-                SUM(quantity) as total_quantity,
-                SUM(total_price) as items_total,
-                SUM(weight * quantity) as total_weight
-              FROM order_items 
-              WHERE order_id = ?";
-    
-    $result = $db->getThisQuery($query, [$order_id]);
-    return $result ? $result[0] : null;
-}
-?>

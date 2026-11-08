@@ -68,12 +68,18 @@
                             <h4><i class="fas fa-clipboard-list"></i> Détails de la Commande</h4>
                         </div>
                         <div class="form-grid">
-
                             <div class="form-group">
                                 <label for="edit-order-subtotal">
                                     <i class="fas fa-calculator"></i> Sous-total (MAD)
                                 </label>
                                 <input type="number" id="edit-order-subtotal" class="form-control money-input" step="0.01" min="0" readonly>
+                            </div>
+                            
+                            <div class="form-group">
+                                <label for="edit-order-shipping">
+                                    <i class="fas fa-truck"></i> Frais de livraison (MAD)
+                                </label>
+                                <input type="number" id="edit-order-shipping" class="form-control money-input" step="0.01" min="0" onchange="recalculateOrderTotal()">
                             </div>
                             
                             <div class="form-group">
@@ -726,7 +732,7 @@
                         
                         // Populate form with data
                         populateEditForm(data.order);
-                    }, 800); // Small delay for better UX
+                    }, 800);
                 } else {
                     showNotification(data.message || 'Erreur lors du chargement', 'error');
                     closeEditOrderModal();
@@ -763,7 +769,7 @@
         setFieldValue('edit-client-address', order.shipping_address, true);
         setFieldValue('edit-client-city', order.shipping_city, true);
         
-        // Calculate subtotal from items (total before discount)
+        // Calculate subtotal from items (total before discount and shipping)
         let calculatedSubtotal = 0;
         if (order.items && order.items.length > 0) {
             calculatedSubtotal = order.items.reduce((sum, item) => {
@@ -773,10 +779,24 @@
             }, 0);
         }
         
-        // Populate order details - use the ACTUAL values from database
-        setFieldValue('edit-order-discount', parseFloat(order.discount_amount || 0).toFixed(2)); // Exact discount from DB
-        setFieldValue('edit-order-subtotal', calculatedSubtotal.toFixed(2)); // Subtotal before discount
-        setFieldValue('edit-order-total', parseFloat(order.total_amount || 0).toFixed(2)); // Final total from DB
+        // Get shipping cost from order data
+        const shippingCost = parseFloat(order.shipping_cost || 0);
+        
+        // Calculate the original discount by reverse-engineering from totals
+        // Original formula: total = subtotal + shipping - discount
+        const originalTotal = parseFloat(order.total_amount || 0);
+        const originalSubtotal = parseFloat(order.original_subtotal || calculatedSubtotal);
+        const originalDiscount = originalSubtotal + shippingCost - originalTotal;
+        
+        // Populate order details
+        setFieldValue('edit-order-shipping', shippingCost.toFixed(2));
+        setFieldValue('edit-order-discount', Math.max(0, originalDiscount).toFixed(2));
+        setFieldValue('edit-order-subtotal', calculatedSubtotal.toFixed(2));
+        
+        // Calculate initial total
+        const initialTotal = Math.max(0, calculatedSubtotal + shippingCost - originalDiscount);
+        setFieldValue('edit-order-total', initialTotal.toFixed(2));
+        
         setFieldValue('edit-order-notes', order.notes);
         
         // Update status badge
@@ -1029,12 +1049,16 @@
             }
         });
         
+        const shippingInput = document.getElementById('edit-order-shipping');
         const discountInput = document.getElementById('edit-order-discount');
         const subtotalInput = document.getElementById('edit-order-subtotal');
         const totalInput = document.getElementById('edit-order-total');
         
+        const shipping = parseFloat(shippingInput ? shippingInput.value : 0) || 0;
         const discount = parseFloat(discountInput ? discountInput.value : 0) || 0;
-        const total = Math.max(0, subtotal - discount);
+        
+        // Calculate total: subtotal + shipping - discount
+        const total = Math.max(0, subtotal + shipping - discount);
         
         // Animate changes
         if (subtotalInput) {
@@ -1051,31 +1075,6 @@
         
         // Update products summary
         updateProductsSummary(itemCount);
-    }
-
-    function closeEditOrderModal() {
-        const modal = document.getElementById('edit-order-modal');
-        if (modal) {
-            modal.classList.remove('show');
-            setTimeout(() => {
-                modal.style.display = 'none';
-                modal.classList.remove('fade-in');
-                // Reset form
-                const form = document.getElementById('edit-order-form');
-                if (form) {
-                    form.reset();
-                    // Remove validation classes
-                    form.querySelectorAll('.form-control').forEach(input => {
-                        input.classList.remove('is-valid', 'is-invalid');
-                    });
-                    form.querySelectorAll('.field-validation').forEach(validation => {
-                        validation.textContent = '';
-                        validation.classList.remove('success');
-                    });
-                }
-            }, 300);
-        }
-        currentOrderId = null;
     }
 
     function saveEditedOrder() {
@@ -1100,6 +1099,7 @@
             shipping_address: document.getElementById('edit-client-address').value.trim(),
             shipping_city: document.getElementById('edit-client-city').value.trim(),
             subtotal: document.getElementById('edit-order-subtotal').value,
+            shipping_cost: document.getElementById('edit-order-shipping').value,
             discount_amount: document.getElementById('edit-order-discount').value,
             total_amount: document.getElementById('edit-order-total').value,
             notes: document.getElementById('edit-order-notes').value.trim(),
@@ -1170,6 +1170,31 @@
                 saveBtn.innerHTML = originalText;
             }, 2000);
         });
+    }
+
+    function closeEditOrderModal() {
+        const modal = document.getElementById('edit-order-modal');
+        if (modal) {
+            modal.classList.remove('show');
+            setTimeout(() => {
+                modal.style.display = 'none';
+                modal.classList.remove('fade-in');
+                // Reset form
+                const form = document.getElementById('edit-order-form');
+                if (form) {
+                    form.reset();
+                    // Remove validation classes
+                    form.querySelectorAll('.form-control').forEach(input => {
+                        input.classList.remove('is-valid', 'is-invalid');
+                    });
+                    form.querySelectorAll('.field-validation').forEach(validation => {
+                        validation.textContent = '';
+                        validation.classList.remove('success');
+                    });
+                }
+            }, 300);
+        }
+        currentOrderId = null;
     }
 
     function validateAllFields() {

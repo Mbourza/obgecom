@@ -1,6 +1,4 @@
-<?php
-
-if(file_exists(stream_resolve_include_path("../core/init.php"))) {
+<?php if(file_exists(stream_resolve_include_path("../core/init.php"))) {
     require_once("../core/init.php");
 }
 

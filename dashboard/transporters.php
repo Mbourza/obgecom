@@ -38,6 +38,14 @@ $subscription = new Subscription($user_id);
 $subscriptionStatus = $subscription->getSubscriptionStatus();
 $subscriptionAlerts = $subscription->getSubscriptionAlerts();
 
+// Initialize onboarding
+$onboarding = new Onboarding($user_id);
+
+$currentPage = basename($_SERVER['PHP_SELF']);
+if (!$onboarding->isOnboardingCompleted() && $currentPage !== 'onboarding') {
+    Redirect::to('./onboarding');
+}
+
 // Vérifier l'accès aux fonctionnalités
 $canAccessFeatures = $subscription->canAccessFeatures();
 
@@ -51,14 +59,50 @@ function logout() {
     Redirect::to('../login.php');
 }
 
-$supportedCarriers = [
-    ['id' => 'ozonexpress', 'name' => 'OzonExpress', 'logo' => 'ozone.jpeg'],
-    ['id' => 'sendit', 'name' => 'Sendit', 'logo' => 'sendit.jpeg'],
-    ['id' => 'chronopost', 'name' => 'Chronopost', 'logo' => 'chronopost.jpeg'],
-    ['id' => 'forcelog', 'name' => 'Forcelog', 'logo' => 'f.jpeg'],
-    ['id' => 'cathedis', 'name' => 'Cathedis', 'logo' => 'cathedis.jpeg'],
-    ['id' => 'power', 'name' => 'Power Delivery', 'logo' => 'power.jpeg']
-];
+// Get shipping companies from database dynamically
+$shippingCompanies = [];
+$query = "SELECT id, `name`, slug, logo_url, phone, is_active, is_default, fallback_enabled 
+          FROM shipping_options 
+          WHERE is_active = 1 
+          ORDER BY is_default DESC, name ASC";
+
+$shippingCompaniesResult = $db->getThisQuery($query);
+
+if ($shippingCompaniesResult && !empty($shippingCompaniesResult)) {
+    foreach ($shippingCompaniesResult as $company) {
+        $shippingCompanies[] = [
+            'id' => $company['slug'],
+            'name' => $company['name'],
+            'logo' => $company['logo_url']
+        ];
+    }
+}
+
+// Also get custom carriers added by the user
+$customCarriers = $db->getThisQuery(
+    "SELECT id, name, slug, is_active FROM shipping_companies WHERE user_id = ? AND is_active = 1",
+    [$user_id]
+);
+
+if ($customCarriers && !empty($customCarriers)) {
+    foreach ($customCarriers as $carrier) {
+        // Check if already exists in supported carriers list
+        $exists = false;
+        foreach ($shippingCompanies as $existing) {
+            if ($existing['id'] === $carrier['slug']) {
+                $exists = true;
+                break;
+            }
+        }
+        if (!$exists) {
+            $shippingCompanies[] = [
+                'id' => $carrier['slug'],
+                'name' => $carrier['name'],
+                'logo' => null
+            ];
+        }
+    }
+}
 
 ?>
 
@@ -1620,7 +1664,7 @@ $supportedCarriers = [
                     <label for="carrier-type">Transporteur*</label>
                     <select id="carrier-type" name="carrier_type" required>
                         <option value="">Sélectionnez un transporteur</option>
-                        <?php foreach ($supportedCarriers as $carrier): ?>
+                        <?php foreach ($shippingCompanies as $carrier): ?>
                             <option value="<?php echo htmlspecialchars($carrier['id']); ?>">
                                 <?php echo htmlspecialchars($carrier['name']); ?>
                             </option>
@@ -1642,11 +1686,13 @@ $supportedCarriers = [
                 <div class="form-group">
                     <label>Transporteurs supportés</label>
                     <div class="supported-carriers-grid">
-                        <?php foreach ($supportedCarriers as $carrier): ?>
+                        <?php foreach ($shippingCompanies as $carrier): ?>
                             <div class="supported-carrier" data-carrier-id="<?php echo htmlspecialchars($carrier['id']); ?>">
                                 <div class="supported-carrier-logo">
-                                    <?php if (isset($carrier['logo']) && file_exists("../assets/img/carriers/" . $carrier['logo'])): ?>
-                                        <img src="../assets/img/carriers/<?php echo htmlspecialchars($carrier['logo']); ?>" alt="<?php echo htmlspecialchars($carrier['name']); ?>">
+                                    <?php if (!empty($carrier['logo']) && file_exists("../" . $carrier['logo'])): ?>
+                                        <img src="<?php echo htmlspecialchars($carrier['logo']); ?>" alt="<?php echo htmlspecialchars($carrier['name']); ?>">
+                                    <?php elseif (!empty($carrier['logo']) && filter_var($carrier['logo'], FILTER_VALIDATE_URL)): ?>
+                                        <img src="<?php echo htmlspecialchars($carrier['logo']); ?>" alt="<?php echo htmlspecialchars($carrier['name']); ?>">
                                     <?php else: ?>
                                         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
                                             <path d="M3 13.5L2.25 12H7.5l.75-1.5H2L1 9h14l-1 1.5h-.5L13 9h9l1 1.5H15l.75 1.5H21.75L21 13.5h-6.75l-.75 1.5h8.5L23 15H9l1 1.5h.5l.75 1.5H3.75L3 16.5h5.25l-.75 1.5H1.5L1 18l.75 1.5h12L13 18h9.25l.75 1.5H22l-.75-1.5H19.5l.75-1.5H16.5l-.75-1.5H20l1-1.5h-4.5l-.75-1.5H19l1-1.5h-5.25l-.75-1.5H18L19.5 9H21l-1.5 3H22l.75-1.5H24L22.5 9H23l-1.5 3h.75L24 10.5H0"/>
@@ -2414,7 +2460,7 @@ $supportedCarriers = [
         let ordersData = [];
         let totalPages = 1;
         let currentFilters = {};
-        const supportedCarriers = <?php echo json_encode($supportedCarriers); ?>;
+        const supportedCarriers = <?php echo json_encode($shippingCompanies); ?>;
 
         // Initialize page
         document.addEventListener('DOMContentLoaded', function() {
@@ -2474,10 +2520,10 @@ $supportedCarriers = [
                     });
                     this.classList.add('selected');
                     
-                    // Auto-fill tracking URL if available in supported carriers
+                    // Auto-fill API URL if available
                     const selectedCarrier = supportedCarriers.find(c => c.id === carrierId);
-                    if (selectedCarrier && selectedCarrier.default_tracking_url) {
-                        document.getElementById('carrier-tracking-url').value = selectedCarrier.default_tracking_url;
+                    if (selectedCarrier && selectedCarrier.api_url) {
+                        document.getElementById('api-url').value = selectedCarrier.api_url;
                     }
                 });
             });
@@ -2584,7 +2630,7 @@ $supportedCarriers = [
                                 <p class="mt-3 mb-0">Aucune commande trouvée</p>
                             </div>
                         </td>
-                    </tr>
+                    </table>
                 `;
             }
         }
@@ -2619,7 +2665,7 @@ $supportedCarriers = [
                     <div class="carrier-header">
                         <div class="carrier-logo">
                             ${supportedCarrier.logo ? 
-                                `<img src="../assets/img/carriers/${escapeHtml(supportedCarrier.logo)}" alt="${escapeHtml(supportedCarrier.name || carrier.name)}">` : 
+                                `<img src="${escapeHtml(supportedCarrier.logo)}" alt="${escapeHtml(supportedCarrier.name || carrier.name)}">` : 
                                 `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
                                     <path d="M3 13.5L2.25 12H7.5l.75-1.5H2L1 9h14l-1 1.5h-.5L13 9h9l1 1.5H15l.75 1.5H21.75L21 13.5h-6.75l-.75 1.5h8.5L23 15H9l1 1.5h.5l.75 1.5H3.75L3 16.5h5.25l-.75 1.5H1.5L1 18l.75 1.5h12L13 18h9.25l.75 1.5H22l-.75-1.5H19.5l.75-1.5H16.5l-.75-1.5H20l1-1.5h-4.5l-.75-1.5H19l1-1.5h-5.25l-.75-1.5H18L19.5 9H21l-1.5 3H22l.75-1.5H24L22.5 9H23l-1.5 3h.75L24 10.5H0"/>
                                 </svg>`

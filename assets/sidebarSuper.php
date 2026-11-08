@@ -574,7 +574,7 @@ $initials = getInitials($name);
         <div class="nav-section">Finances</div>
 
         <div class="nav-item">
-            <div class="tooltip-wrapper" data-tooltipTableau Financier">
+            <div class="tooltip-wrapper" data-tooltip="Tableau Financier">
                 <a href="finances" class="nav-link" data-page="finances">
                     <span class="nav-icon">
                         <i class="bi bi-graph-up"></i>
@@ -598,7 +598,21 @@ $initials = getInitials($name);
             </div>
         </div>
 
-        <!-- Section 6: Support -->
+        <!-- Section 6: Transporteurs (NEW) -->
+        <div class="nav-section">Logistique</div>
+
+        <div class="nav-item">
+            <div class="tooltip-wrapper" data-tooltip="Gestion des Transporteurs">
+                <a href="shipping_companies" class="nav-link" data-page="shipping_companies">
+                    <span class="nav-icon">
+                        <i class="bi bi-truck"></i>
+                    </span>
+                    <span class="nav-text">TRANSPORTEURS</span>
+                </a>
+            </div>
+        </div>
+
+        <!-- Section 7: Support -->
         <div class="nav-section">Support</div>
 
         <div class="nav-item">
@@ -657,10 +671,12 @@ $initials = getInitials($name);
             // Map PHP files to page identifiers for super admin
             const pageMap = {
                 'super_admin': 'super_admin',
+                'home': 'super_admin',
                 'users': 'users',
                 'subscriptions': 'subscriptions',
                 'finances': 'finances',
                 'stores': 'stores',
+                'shipping_companies': 'shipping_companies',
                 'support': 'support',
                 'settings': 'settings'
             };
@@ -765,10 +781,10 @@ $initials = getInitials($name);
             // Only apply collapsed state on desktop
             if (!stateManager.isMobile() && state.collapsed) {
                 sidebar.classList.add('collapsed');
-                mainContent.classList.add('expanded');
+                if (mainContent) mainContent.classList.add('expanded');
             } else if (!stateManager.isMobile()) {
                 sidebar.classList.remove('collapsed');
-                mainContent.classList.remove('expanded');
+                if (mainContent) mainContent.classList.remove('expanded');
             }
         }
 
@@ -798,7 +814,9 @@ $initials = getInitials($name);
             
             // Update toggle button icon
             const toggleIcon = sidebarToggle.querySelector('i');
-            toggleIcon.style.transform = newCollapsedState ? 'rotate(180deg)' : 'rotate(0deg)';
+            if (toggleIcon) {
+                toggleIcon.style.transform = newCollapsedState ? 'rotate(180deg)' : 'rotate(0deg)';
+            }
             
             console.log('Super Admin Sidebar toggled:', newCollapsedState ? 'collapsed' : 'expanded');
         }
@@ -875,7 +893,7 @@ $initials = getInitials($name);
             } else {
                 // On mobile, remove collapsed state and main content expansion
                 sidebar.classList.remove('collapsed');
-                mainContent.classList.remove('expanded');
+                if (mainContent) mainContent.classList.remove('expanded');
             }
         });
 
@@ -894,11 +912,13 @@ $initials = getInitials($name);
                 
                 // Sync toggle button state with actual sidebar state
                 const state = stateManager.getState();
-                const toggleIcon = sidebarToggle.querySelector('i');
-                if (state.collapsed) {
-                    toggleIcon.style.transform = 'rotate(180deg)';
-                } else {
-                    toggleIcon.style.transform = 'rotate(0deg)';
+                const toggleIcon = sidebarToggle ? sidebarToggle.querySelector('i') : null;
+                if (toggleIcon) {
+                    if (state.collapsed) {
+                        toggleIcon.style.transform = 'rotate(180deg)';
+                    } else {
+                        toggleIcon.style.transform = 'rotate(0deg)';
+                    }
                 }
             }
             

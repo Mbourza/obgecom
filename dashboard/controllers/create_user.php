@@ -1,4 +1,5 @@
-<?php if(file_exists(stream_resolve_include_path("../core/init.php"))) {
+<?php 
+if(file_exists(stream_resolve_include_path("../core/init.php"))) {
     require_once("../core/init.php");
 }
 
@@ -7,40 +8,33 @@ header('Access-Control-Allow-Origin: *');
 header('Access-Control-Allow-Methods: POST, OPTIONS');
 header('Access-Control-Allow-Headers: Content-Type');
 
-// Handle preflight
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     http_response_code(200);
     exit;
 }
 
-// ========== EMAIL VERIFICATION CHECK ==========
-if (!isset($_SESSION['email_verified']) || !$_SESSION['email_verified']) {
+// Phone verification check
+if (!isset($_SESSION['phone_verified']) || !$_SESSION['phone_verified']) {
     http_response_code(400);
-    echo json_encode([
-        'success' => false, 
-        'message' => 'Email verification required. Please verify your email address first.'
-    ]);
+    echo json_encode(['success' => false, 'message' => 'Phone verification required']);
     exit;
 }
 
-// Check if verification is not expired (24 hours)
-if (!isset($_SESSION['email_verified_at']) || (time() - $_SESSION['email_verified_at']) > 86400) {
-    unset($_SESSION['email_verified']);
-    unset($_SESSION['verified_email']);
-    unset($_SESSION['email_verified_at']);
-    
+if (!isset($_SESSION['verified_at']) || (time() - $_SESSION['verified_at']) > 86400) {
+    unset($_SESSION['phone_verified'], $_SESSION['verified_phone'], $_SESSION['verified_at']);
     http_response_code(400);
-    echo json_encode([
-        'success' => false, 
-        'message' => 'Email verification expired. Please verify your email address again.'
-    ]);
+    echo json_encode(['success' => false, 'message' => 'Phone verification expired']);
     exit;
 }
 
-// Get verified email from session
-$verified_email = $_SESSION['verified_email'] ?? '';
-// ========== END EMAIL VERIFICATION CHECK ==========
+$verified_phone = $_SESSION['verified_phone'] ?? '';
+if (empty($verified_phone)) {
+    http_response_code(400);
+    echo json_encode(['success' => false, 'message' => 'Verified phone not found']);
+    exit;
+}
 
+$verified_phone_local = str_replace('+212', '0', $verified_phone);
 $db = DB::getInstance();
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
@@ -50,7 +44,6 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 }
 
 $data = json_decode(file_get_contents('php://input'), true);
-
 if (!$data) {
     http_response_code(400);
     echo json_encode(['success' => false, 'message' => 'Invalid JSON data']);
@@ -59,145 +52,164 @@ if (!$data) {
 
 try {
     // Validate required fields
-    $required_fields = ['name', 'password', 'selectedPlan'];
-    $missing_fields = [];
-    
-    foreach ($required_fields as $field) {
-        if (empty($data[$field])) {
-            $missing_fields[] = $field;
-        }
+    $required = ['name', 'email', 'password', 'orders'];
+    $missing = array_diff($required, array_keys($data));
+    if (!empty($missing)) {
+        throw new Exception("Required fields missing: " . implode(', ', $missing));
     }
     
-    if (!empty($missing_fields)) {
-        throw new Exception("Champs requis manquants: " . implode(', ', $missing_fields));
+    $email = trim($data['email']);
+    if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+        throw new Exception("Invalid email address");
     }
     
-    // Check if email already exists (using verified email from session)
-    $existing_user = $db->getThisQuery("
-        SELECT id 
-        FROM users 
-        WHERE email = ?
-    ", [$verified_email]);
-    
-    if (!empty($existing_user)) {
-        throw new Exception('Email déjà utilisé');
+    // Check existing user
+    $existing = $db->getThisQuery("SELECT id FROM users WHERE email = ?", [$email]);
+    if (!empty($existing)) {
+        throw new Exception('Email already registered');
     }
+    
+    $existingPhone = $db->getThisQuery("SELECT id FROM users WHERE phone = ?", [$verified_phone_local]);
+    if (!empty($existingPhone)) {
+        throw new Exception('Phone number already registered');
+    }
+    
+    // Get quota details
+    $orders = (int)$data['orders'];
+    $isFree = $orders <= 100;
     
     // Get plan ID
-    $plan_id = getPlanId($db, $data['selectedPlan']);
-    
-    if (!$plan_id) {
-        throw new Exception('Plan sélectionné invalide');
+    $planKey = $isFree ? 'starter' : 'payg';
+    $planResult = $db->getThisQuery("SELECT id FROM plans WHERE LOWER(name) = ?", [strtolower($planKey)]);
+    if (empty($planResult)) {
+        // Create default plan if not exists
+        $planId = $db->insert('plans', [
+            'name' => $planKey === 'starter' ? 'Starter' : 'Pay as you go',
+            'price' => $isFree ? 0 : 0.80,
+            'orders_limit' => $orders,
+            'is_free' => $isFree ? 1 : 0,
+            'is_active' => 1,
+            'created_at' => date('Y-m-d H:i:s'),
+            'updated_at' => date('Y-m-d H:i:s')
+        ]);
+    } else {
+        $planId = $planResult[0]['id'];
     }
-    
-    // Handle duration (default to 1 month if not provided)
-    $duration = isset($data['duration']) ? intval($data['duration']) : 1;
-    $monthly_price = isset($data['monthlyPrice']) ? floatval($data['monthlyPrice']) : 0;
-    $total_amount = isset($data['totalAmount']) ? floatval($data['totalAmount']) : 0;
-    $discount = isset($data['discount']) ? floatval($data['discount']) : 0;
-    
-    // Calculate subscription end date based on duration
-    $subscription_end_date = date('Y-m-d H:i:s', strtotime("+$duration months"));
     
     // Hash password
     $hashed_password = password_hash($data['password'], PASSWORD_DEFAULT);
     
-    // Prepare user data - USE VERIFIED EMAIL FROM SESSION
+    // Calculate subscription
+    $duration = 1;
+    $monthly_price = $isFree ? 0 : ($orders - 100) * 0.80;
+    $total_amount = $monthly_price * $duration;
+    
+    $subscription_end_date = date('Y-m-d H:i:s', strtotime("+$duration months"));
+    
+    // Prepare user data
     $user_data = [
         'name' => $data['name'],
-        'email' => $verified_email, // Use verified email from session instead of request data
+        'email' => $email,
         'password' => $hashed_password,
-        'role' => isset($data['role']) ? $data['role'] : 'user',
-        'phone' => $data['phone'] ?? '', // Phone is optional now
-        'plan_id' => $plan_id,
-        'is_active' => 0,
-        'active' => 0,
-        'is_verified' => 1, // Mark as verified since we already verified via email
-        'email_verified_at' => date('Y-m-d H:i:s'),
-        'activation_key' => isset($data['activation_key']) ? $data['activation_key'] : '',
-        'status' => 'pending_payment',
+        'phone' => $verified_phone_local,
+        'role' => 'admin',
+        'plan_id' => $planId,
+        'is_active' => $isFree ? 1 : 0,
+        'active' => $isFree ? 1 : 0,
+        'status' => $isFree ? 'active' : 'pending_payment',
         'subscription_duration' => $duration,
         'monthly_price' => $monthly_price,
         'total_amount' => $total_amount,
-        'discount_applied' => $discount,
         'subscription_end_date' => $subscription_end_date,
+        'phone_verified' => 1,
+        'phone_verified_at' => date('Y-m-d H:i:s'),
+        'verified_method' => $_SESSION['verified_method'] ?? 'sms',
         'created_at' => date('Y-m-d H:i:s'),
         'added' => date('Y-m-d H:i:s')
     ];
     
-    // Insert user using DB class method
     $user_result = $db->insert('users', $user_data);
+   
+    if (!$user_result) {
+        throw new Exception('Error creating user');
+    }
     
-    if ($user_result) {
-        $user_id = $db->getLastInsertId();
-        
-        // Store selected plan in user_plans table with duration information
-        $plan_data = [
+    $user_id = $db->getLastInsertId();
+    
+    // Create quota for user
+    $currentMonth = date('Y-m-01');
+    $quotaData = [
+        'user_id' => $user_id,
+        'quota_month' => $currentMonth,
+        'total_quota' => $orders,
+        'orders_used' => 0,
+        'orders_remaining' => $orders,
+        'rollover_from_previous' => 0,
+        'is_free_trial' => $isFree ? 1 : 0,
+        'paid_amount' => $total_amount,
+        'payment_status' => $isFree ? 'paid' : 'pending',
+        'created_at' => date('Y-m-d H:i:s')
+    ];
+    
+    $db->insert('user_quotas', $quotaData);
+    $quotaId = $db->getLastInsertId();
+    
+    // Create user plan record
+    $plan_data = [
+        'user_id' => $user_id,
+        'plan_id' => $planId,
+        'duration_months' => $duration,
+        'monthly_price' => $monthly_price,
+        'total_amount' => $total_amount,
+        'status' => $isFree ? 'active' : 'pending',
+        'activated_at' => $isFree ? date('Y-m-d H:i:s') : null,
+        'expires_at' => $subscription_end_date,
+        'created_at' => date('Y-m-d H:i:s')
+    ];
+    $db->insert('user_plans', $plan_data);
+    
+    // If not free, create transaction
+    $transactionId = null;
+    if (!$isFree && $total_amount > 0) {
+        $txnId = 'QTA_' . uniqid() . '_' . time();
+        $transactionData = [
             'user_id' => $user_id,
-            'plan_id' => $plan_id,
-            'duration_months' => $duration,
-            'monthly_price' => $monthly_price,
-            'total_amount' => $total_amount,
-            'discount' => $discount,
+            'quota_id' => $quotaId,
+            'transaction_id' => $txnId,
+            'order_count' => $orders - 100,
+            'amount' => $total_amount,
+            'price_per_order' => 0.80,
+            'currency' => 'MAD',
+            'payment_method' => 'card',
             'status' => 'pending',
-            'activated_at' => date('Y-m-d H:i:s'),
-            'expires_at' => $subscription_end_date,
+            'description' => "Quota purchase: {$orders} orders",
             'created_at' => date('Y-m-d H:i:s')
         ];
-        
-        $plan_result = $db->insert('user_plans', $plan_data);
-        
-        if ($plan_result) {
-            // ========== CLEAR VERIFICATION SESSION AFTER SUCCESSFUL USER CREATION ==========
-            unset($_SESSION['email_verified']);
-            unset($_SESSION['verified_email']);
-            unset($_SESSION['email_verified_at']);
-            // ========== END CLEAR VERIFICATION SESSION ==========
-            
-            echo json_encode([
-                'success' => true,
-                'user_id' => $user_id,
-                'duration' => $duration,
-                'monthly_price' => $monthly_price,
-                'total_amount' => $total_amount,
-                'discount' => $discount,
-                'subscription_end_date' => $subscription_end_date,
-                'message' => 'Utilisateur créé avec succès'
-            ]);
-        } else {
-            throw new Exception('Erreur lors de l\'association du plan à l\'utilisateur');
-        }
-        
-    } else {
-        throw new Exception('Erreur lors de la création de l\'utilisateur');
+        $db->insert('quota_transactions', $transactionData);
+        $transactionId = $txnId;
     }
+    
+    // Clear verification session
+    unset($_SESSION['phone_verified'], $_SESSION['verified_phone'], $_SESSION['verified_at']);
+    
+    // Log success
+    error_log("User created: ID $user_id, Email: $email, Orders: $orders, Free: " . ($isFree ? 'Yes' : 'No'));
+    
+    echo json_encode([
+        'success' => true,
+        'user_id' => $user_id,
+        'email' => $email,
+        'phone' => $verified_phone_local,
+        'orders' => $orders,
+        'is_free' => $isFree,
+        'total_amount' => $total_amount,
+        'transaction_id' => $transactionId,
+        'message' => $isFree ? 'Free account created successfully!' : 'Account created. Please complete payment.'
+    ]);
     
 } catch (Exception $e) {
     error_log("Error in create_user.php: " . $e->getMessage());
     http_response_code(400);
-    echo json_encode([
-        'success' => false,
-        'message' => $e->getMessage()
-    ]);
-}
-
-function getPlanId($db, $plan_key) {
-    // Convert plan_key to lowercase
-    $plan_key = strtolower($plan_key);
-
-    $plan_names = [
-        'starter' => 'Starter',
-        'professional' => 'Professional',
-        'growth' => 'Growth',
-        'business' => 'Business'
-    ];
-    
-    if (!isset($plan_names[$plan_key])) {
-        return false;
-    }
-    
-    $result = $db->getThisQuery("SELECT id FROM plans WHERE name = ?", [$plan_names[$plan_key]]);
-    
-    return !empty($result) ? $result[0]['id'] : false;
+    echo json_encode(['success' => false, 'message' => $e->getMessage()]);
 }
 ?>

@@ -503,6 +503,6 @@
     </div>
 
     <div class="footer-copyright">
-        © 2025 OBG. Tous droits réservés.
+        © 2026 OBG. Tous droits réservés. | Développé par <a href="https://brz.ma/" target="_blank" rel="noopener noreferrer" style="text-decoration: none;">BRZ</a>
     </div>
 </footer>

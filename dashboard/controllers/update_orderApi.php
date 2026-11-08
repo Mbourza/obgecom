@@ -19,7 +19,7 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 
 $data = json_decode(file_get_contents('php://input'), true);
 
-if (!$data) {
+if (!$data) { 
     http_response_code(400);
     echo json_encode(['success' => false, 'message' => 'Invalid JSON data']);
     exit;
@@ -27,7 +27,7 @@ if (!$data) {
 
 try {
     // Validate required fields
-    $required_fields = ['order_id', 'customer_name', 'customer_phone', 'customer_email'];
+    $required_fields = ['order_id', 'customer_name', 'customer_phone'];
     $missing_fields = [];
     
     foreach ($required_fields as $field) {
@@ -38,11 +38,6 @@ try {
     
     if (!empty($missing_fields)) {
         throw new Exception("Champs requis manquants: " . implode(', ', $missing_fields));
-    }
-    
-    // Validate email format
-    if (!filter_var($data['customer_email'], FILTER_VALIDATE_EMAIL)) {
-        throw new Exception('Format d\'email invalide');
     }
     
     // Validate order ID
@@ -65,12 +60,14 @@ try {
     
     // Start database transaction
     $db->beginTransaction();
+
     
     try {
-        // Calculate final total amount (subtotal - discount)
+        // Calculate final total amount (subtotal + shipping - discount)
         $subtotal = isset($data['subtotal']) ? floatval($data['subtotal']) : 0;
+        $shipping_cost = isset($data['shipping_cost']) ? floatval($data['shipping_cost']) : 0;
         $discount_amount = isset($data['discount_amount']) ? floatval($data['discount_amount']) : 0;
-        $final_total = $subtotal - $discount_amount;
+        $final_total = $subtotal + $shipping_cost - $discount_amount;
         
         // Ensure total is not negative
         if ($final_total < 0) {
@@ -81,11 +78,12 @@ try {
         $order_update_data = [
             'customer_name' => trim($data['customer_name']),
             'customer_phone' => trim($data['customer_phone']),
-            'customer_email' => trim($data['customer_email']),
+            'customer_email' => isset($data['customer_email']) ? trim($data['customer_email']) : '',
             'shipping_address' => isset($data['shipping_address']) ? trim($data['shipping_address']) : '',
             'customer_ville' => isset($data['shipping_city']) ? trim($data['shipping_city']) : '',
             'total_amount' => $final_total,
-            'discount_amount'=>$discount_amount,
+            'shipping_cost' => $shipping_cost,
+            'discount_amount' => $discount_amount,
             'updated_at' => date('Y-m-d H:i:s')
         ];
         
@@ -96,7 +94,6 @@ try {
         
         // Update order
         $order_result = $db->update('orders', $order_id, $order_update_data);
-        
         if (!$order_result) {
             throw new Exception('Erreur lors de la mise à jour de la commande');
         }
@@ -179,7 +176,7 @@ try {
                     }
                     
                     // Add weight to total
-                    if ($new_item_data['weight'] > 0) {
+                    if (isset($new_item_data['weight']) && $new_item_data['weight'] > 0) {
                         $total_weight += $new_item_data['weight'];
                     }
                 }
@@ -198,7 +195,8 @@ try {
             'success' => true,
             'order_id' => $order_id,
             'message' => 'Commande mise à jour avec succès',
-            'final_total' => $final_total
+            'final_total' => $final_total,
+            'shipping_cost' => $shipping_cost
         ]);
         
     } catch (Exception $e) {
@@ -219,7 +217,7 @@ try {
 /**
  * Get current user ID from session
  * Reusing the same function from create_order.php
- */
+*/
 function getCurrentUserId($db) {
     if (!isset($_SESSION['user']['username']) || empty($_SESSION['user']['username'])) {
         return null;
@@ -274,7 +272,7 @@ function getOrderById($db, $order_id, $user_id) {
 function getOrderItem($db, $item_id) {
     // Use product_id column for matching
     $query = "SELECT * FROM order_items WHERE id = ? LIMIT 1";
-    $result = $db->getThisQuery($query, [$item_id, ]);
+    $result = $db->getThisQuery($query, [$item_id]);
     
     if ($result && count($result) > 0) {
         return $result[0];

@@ -276,7 +276,7 @@
         width: 100% !important;
         max-width: 100%;
         height: 100%;
-        border-radius: 0px;
+        border-radius: 0px !important;
         box-shadow: 0 20px 40px rgba(0, 0, 0, 0.15);
         display: flex;
         flex-direction: column;

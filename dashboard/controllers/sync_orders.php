@@ -1,8 +1,10 @@
-<?php
+<?php //whatsapp_webhook.php
 
 if(file_exists(stream_resolve_include_path("../core/init.php"))) {
     require_once("../core/init.php");
 }
+
+require_once('./config/e_config.php');
 
 // api/sync_orders.php - Synchronize orders from connected stores
 header('Content-Type: application/json');
@@ -136,391 +138,710 @@ try {
 }
 
 /**
- * Synchronize orders from YouCan store
+ * @param  object $db     Database instance (expects beginTransaction/commit/rollback/insert/getThisQuery/getLastInsertId)
+ * @param  array  $store  Store row (must contain: id, user_id, api_key)
+ * @return array          ['synced' => int, 'updated' => int, 'new_order_ids' => array, 'distribution' => array]
 */
 
 function syncYouCanOrders($db, $store) {
-    // YouCan API uses fixed base URL, not store-specific
-    $api_base = 'https://api.youcan.shop';
-    $access_token = $store['api_key']; // This is the OAuth access token
-    
+    $api_base     = 'https://api.youcan.shop';
+    $access_token = $store['api_key'];
+
     $headers = [
         'Authorization: Bearer ' . $access_token,
         'Accept: application/json',
-        'Content-Type: application/json'
+        'Content-Type: application/json',
     ];
-    
-    $orders_synced = 0;
+
+    // ─────────────────────────────────────────────────────────────
+    // Pagination config
+    // ─────────────────────────────────────────────────────────────
+    $per_page  = 50;   // how many orders to request per page
+    $max_pages = 5;    // HARD CAP: 2 pages × 50 = max 100 orders per sync
+                       // Set to 1 for max 50, 2 for max 100, etc.
+
+    $orders_synced  = 0;
     $orders_updated = 0;
-    $page = 1;
-    $per_page = 50;
-    $has_more = true;
-    
-    while ($has_more) {
-        // YouCan orders endpoint with pagination
-        $url = $api_base . '/orders?page=' . $page . '&per_page=' . $per_page;
-        
-        error_log("Fetching YouCan orders - Page: $page");
-        
+    $new_order_ids  = [];
+    $page           = 1;
+    $has_more       = true;
+    $seen_order_ids = []; // dedupe within this run
+
+    while ($has_more && $page <= $max_pages) {
+
+        $url = $api_base . '/orders'
+             . '?page='        . $page
+             . '&limit='       . $per_page
+             . '&include='     . urlencode('customer,variants,payment,shipping')
+             . '&sort_field=created_at&sort_order=desc';
+
+        // ─────────────────────────────────────────────────────────
+        // HTTP request
+        // ─────────────────────────────────────────────────────────
         $ch = curl_init();
         curl_setopt($ch, CURLOPT_URL, $url);
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
         curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
         curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
         curl_setopt($ch, CURLOPT_TIMEOUT, 30);
-        
-        $response = curl_exec($ch);
-        $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+
+        $response   = curl_exec($ch);
+        $http_code  = curl_getinfo($ch, CURLINFO_HTTP_CODE);
         $curl_error = curl_error($ch);
         curl_close($ch);
-        
+
         if ($curl_error) {
             throw new Exception("CURL Error: " . $curl_error);
         }
-        
+
         if ($http_code !== 200) {
-            throw new Exception("Erreur API YouCan: HTTP {$http_code} - Response: " . $response);
+            throw new Exception("Erreur API YouCan: HTTP {$http_code} - Response: " . substr($response, 0, 500));
         }
-        
+
         $data = json_decode($response, true);
-        
-        if (!$data || !isset($data['data'])) {
-            error_log("YouCan API response: " . $response);
+
+        if (!$data || !isset($data['data']) || !is_array($data['data'])) {
+            error_log("YouCan sync: invalid response — " . substr($response, 0, 500));
             throw new Exception('Réponse API YouCan invalide - data missing');
         }
-        
+
         $orders = $data['data'];
-        
-        // Check if there are more pages
-        if (empty($orders) || count($orders) < $per_page) {
+
+        // ─────────────────────────────────────────────────────────
+        // Empty page → done
+        // ─────────────────────────────────────────────────────────
+        if (empty($orders)) {
+            error_log("YouCan sync: page {$page} returned 0 orders — stopping");
             $has_more = false;
+            break;
         }
-        
+
+        // ─────────────────────────────────────────────────────────
+        // Pagination: trust YouCan's own meta when available
+        // ─────────────────────────────────────────────────────────
+        $pagination = $data['meta']['pagination'] ?? null;
+
+        if (is_array($pagination)) {
+            $current_page = (int)($pagination['current_page'] ?? $page);
+            $last_page    = (int)($pagination['last_page']    ?? $page);
+            error_log("YouCan sync: pagination meta — page {$current_page}/{$last_page}");
+
+            if ($current_page >= $last_page) {
+                $has_more = false;
+            }
+        } else {
+            // Fallback: if we got fewer than requested, we're on the last page
+            if (count($orders) < $per_page) {
+                $has_more = false;
+            }
+        }
+
+        // ─────────────────────────────────────────────────────────
+        // Duplicate page guard (in case YouCan ignores 'page')
+        // ─────────────────────────────────────────────────────────
+        $first_id = $orders[0]['id'] ?? null;
+        if ($first_id !== null && isset($seen_order_ids[$first_id])) {
+            error_log("YouCan sync: page {$page} repeats first order {$first_id} — stopping");
+            $has_more = false;
+            break;
+        }
+
+        // ─────────────────────────────────────────────────────────
+        // Process each order on this page
+        // ─────────────────────────────────────────────────────────
         foreach ($orders as $order) {
+
+            $order_id_key = $order['id'] ?? null;
+            if ($order_id_key === null) {
+                error_log("YouCan sync: skipping order without id");
+                continue;
+            }
+
+            // Dedupe within this run
+            if (isset($seen_order_ids[$order_id_key])) {
+                error_log("YouCan sync: skipping duplicate order {$order_id_key} (seen this run)");
+                continue;
+            }
+            $seen_order_ids[$order_id_key] = true;
+
             try {
-                // Check if order already exists
+                // ─────────────────────────────────────────────────
+                // Already in DB? Only refresh shipping status
+                // ─────────────────────────────────────────────────
                 $existing_order = $db->getThisQuery(
-                    "SELECT id, shipping_status, tracking_number, shipping_company_id FROM orders WHERE store_id = ? AND external_order_id = ?",
+                    "SELECT id, shipping_status, tracking_number, shipping_company_id
+                     FROM orders
+                     WHERE store_id = ? AND external_order_id = ?
+                     LIMIT 1",
                     [$store['id'], $order['id']]
                 );
-                
+
                 if (!empty($existing_order)) {
-                    error_log("YouCan order {$order['id']} already exists, updating");
-                    
-                    // Update existing order's shipping status
+                    error_log("YouCan sync: order {$order['id']} already exists — checking shipping update");
                     $updated = updateOrderShippingStatus($db, $existing_order[0]);
                     if ($updated) {
                         $orders_updated++;
                     }
                     continue;
                 }
-                
-                // Begin transaction for order and items
+
+                // ─────────────────────────────────────────────────
+                // New order — open transaction
+                // ─────────────────────────────────────────────────
+                $transaction_open = false;
                 if (method_exists($db, 'beginTransaction')) {
                     $db->beginTransaction();
+                    $transaction_open = true;
                 }
-                
+
                 try {
-                    // Extract customer info from order
-                    $customer_name = '';
-                    $customer_email = '';
-                    $customer_phone = '';
-                    $shipping_address_data = [];
-                    $billing_address_data = [];
-                    
-                    // Get shipping address
-                    if (isset($order['shipping']['address']) && is_array($order['shipping']['address'])) {
-                        $shipping_address_data = $order['shipping']['address'];
-                        $customer_name = $shipping_address_data['name'] ?? $shipping_address_data['first_name'] ?? '';
-                        $customer_phone = $shipping_address_data['phone'] ?? '';
-                    }
-                    
-                    // Get payment address for email
-                    if (isset($order['payment']['address']) && is_array($order['payment']['address'])) {
-                        $billing_address_data = $order['payment']['address'];
-                        $customer_email = $billing_address_data['email'] ?? '';
-                        if (empty($customer_name)) {
-                            $customer_name = $billing_address_data['name'] ?? $billing_address_data['first_name'] ?? '';
-                        }
-                        if (empty($customer_phone)) {
-                            $customer_phone = $billing_address_data['phone'] ?? '';
-                        }
-                    }
-                    
-                    // Extract shipping info
-                    $tracking_number = $order['shipping']['tracking_number'] ?? null;
-                    $shipping_status_code = $order['shipping']['status'] ?? 0;
-                    
-                    // Format addresses
-                    $formatted_shipping_address = formatYouCanAddress($shipping_address_data);
-                    $formatted_billing_address = formatYouCanAddress($billing_address_data);
-                    
-                    // Get city from shipping address
-                    $customer_ville = $shipping_address_data['city'] 
-                    ?? $order['payment']['address']['city'] 
-                    ?? 'Non renseigné';
-                    
-                    $order_data = [
-                        'store_id'             => $store['id'],
-                        'user_id'              => $store['user_id'],
-                        'external_order_id'    => $order['id'],
-                        'order_number'         => $order['ref'] ?? $order['id'],
-                        'customer_name'        => $customer_name,
-                        'customer_email'       => $customer_email,
-                        'customer_phone'       => $customer_phone,
-                        'customer_ville'       => $customer_ville,
-                        'shipping_address'     => $formatted_shipping_address,
-                        'billing_address'      => $formatted_billing_address,
-                        'total_amount'         => floatval($order['total'] ?? 0),
-                        'currency'             => 'MAD', // YouCan is Morocco-based
-                        'status'               => mapYouCanOrderStatus(
-                            $order['status'], 
-                            $order['shipping_status'], 
-                            $order['confirmation_status']
-                        ),
-                        'shipping_status'      => mapYouCanShippingStatus($shipping_status_code),
-                        'payment_status'       => mapYouCanPaymentStatus($order['payment']['status'] ?? 5),
-                        'shipping_method'      => $order['shipping']['payload']['name'] ?? null,
-                        'tracking_number'      => $tracking_number,
-                        'order_date'           => $order['created_at'] ?? date('Y-m-d H:i:s'),
-                        'platform'             => 'youcan',
-                        'created_at'           => date('Y-m-d H:i:s'),
-                        'updated_at'           => date('Y-m-d H:i:s'),
-                        'confirmed_by_agent'   => null,
-                        'handled_at'           => null
-                    ];
-                    
-                    error_log("Inserting YouCan order: " . $order['ref']);
-                    
-                    $result = $db->insert('orders', $order_data);
-                    
-                    if ($result) {
-                        $order_id = $db->getLastInsertId();
-                        error_log("YouCan order inserted with ID: " . $order_id);
-                        
-                        // Insert order items (variants in YouCan)
-                        if (isset($order['variants']) && is_array($order['variants'])) {
-                            foreach ($order['variants'] as $variant_item) {
-                                $variant = $variant_item['variant'] ?? null;
-                                $product = $variant['product'] ?? null;
-                                
-                                $item_data = [
-                                    'order_id' => $order_id,
-                                    'product_name' => $product['name'] ?? 'Unknown Product',
-                                    'product_sku' => $variant['sku'] ?? '',
-                                    'quantity' => intval($variant_item['quantity'] ?? 1),
-                                    'unit_price' => floatval($variant_item['price'] ?? 0),
-                                    'total_price' => floatval($variant_item['price'] ?? 0) * intval($variant_item['quantity'] ?? 1),
-                                    'weight' => $variant['weight'] ?? null,
-                                    'created_at' => date('Y-m-d H:i:s')
-                                ];
-                                
-                                $item_result = $db->insert('order_items', $item_data);
-                                
-                                if (!$item_result) {
-                                    throw new Exception("Erreur lors de l'insertion de l'article: " . $item_data['product_name']);
-                                }
+                    // ═════════════════════════════════════════════
+                    // CUSTOMER INFO — single source of truth
+                    // ═════════════════════════════════════════════
+                    $customer_info = getYouCanCustomerInfo($order);
+
+                    $customer_name  = $customer_info['name'];
+                    $customer_email = $customer_info['email'];
+                    $customer_phone = $customer_info['phone'];
+                    $customer_ville = $customer_info['city'];
+
+                    $formatted_shipping_address = $customer_info['shipping_address_formatted'];
+                    $formatted_billing_address  = $customer_info['billing_address_formatted'];
+
+                    // ═════════════════════════════════════════════
+                    // TRACKING NUMBER — try every known location
+                    // ═════════════════════════════════════════════
+                    $tracking_number = null;
+
+                    if (!empty($order['shipping']['tracking_number'])) {
+                        $tracking_number = $order['shipping']['tracking_number'];
+                    } elseif (!empty($order['tracking_number'])) {
+                        $tracking_number = $order['tracking_number'];
+                    } elseif (!empty($order['fulfillments']) && is_array($order['fulfillments'])) {
+                        foreach ($order['fulfillments'] as $f) {
+                            if (!empty($f['tracking_number'])) {
+                                $tracking_number = $f['tracking_number'];
+                                break;
                             }
                         }
-                        
-                        if (method_exists($db, 'commit')) {
-                            $db->commit();
+                    }
+
+                    // ═════════════════════════════════════════════
+                    // SHIPPING / ORDER / PAYMENT STATUS
+                    // ═════════════════════════════════════════════
+                    $shipping_status_code = $order['shipping']['status']
+                        ?? $order['shipping_status']
+                        ?? 'unfulfilled';
+
+                    $order_status    = mapYouCanOrderStatus($order);
+                    $shipping_status = mapYouCanShippingStatus($shipping_status_code);
+                    $payment_status  = mapYouCanPaymentStatus(
+                        $order['payment']['status']
+                        ?? $order['payment_status']
+                        ?? 'pending'
+                    );
+
+                    // ═════════════════════════════════════════════
+                    // Build order row
+                    // ═════════════════════════════════════════════
+                    $order_data = [
+                        'store_id'           => $store['id'],
+                        'user_id'            => $store['user_id'],
+                        'external_order_id'  => $order['id'],
+                        'order_number'       => $order['ref'] ?? $order['id'],
+                        'customer_name'      => $customer_name,
+                        'customer_email'     => $customer_email,
+                        'customer_phone'     => $customer_phone,
+                        'customer_ville'     => $customer_ville,
+                        'shipping_address'   => $formatted_shipping_address,
+                        'billing_address'    => $formatted_billing_address,
+                        'total_amount'       => floatval($order['total'] ?? 0),
+                        'currency'           => $order['currency'] ?? 'MAD',
+                        'status'             => $order_status,
+                        'shipping_status'    => $shipping_status,
+                        'payment_status'     => $payment_status,
+                        'shipping_method'    => $order['shipping']['method'] ?? null,
+                        'tracking_number'    => $tracking_number,
+                        'order_date'         => convertYouCanDateTime($order['created_at'] ?? date('Y-m-d H:i:s')),
+                        'platform'           => 'youcan',
+                        'created_at'         => date('Y-m-d H:i:s'),
+                        'updated_at'         => date('Y-m-d H:i:s'),
+                        'confirmed_by_agent' => null,
+                        'handled_at'         => null,
+                    ];
+
+
+                    // ═════════════════════════════════════════════
+                    // Insert order (handle unique-constraint duplicates)
+                    // ═════════════════════════════════════════════
+                    try {
+                        $result = $db->insert('orders', $order_data);
+                    } catch (Exception $e) {
+                        $is_duplicate = (strpos($e->getMessage(), '1062') !== false)
+                            || (strpos($e->getMessage(), '23000') !== false)
+                            || (stripos($e->getMessage(), 'duplicate') !== false);
+
+                        if ($is_duplicate) {
+                            error_log("YouCan sync: order {$order['id']} already exists (unique constraint) — skipping");
+                            if ($transaction_open && method_exists($db, 'rollback')) {
+                                $db->rollback();
+                            }
+                            continue;
                         }
-                        $orders_synced++;
-                        error_log("YouCan order {$order['id']} synchronized successfully");
-                        
-                    } else {
-                        if (method_exists($db, 'rollback')) {
+                        throw $e;
+                    }
+
+                    if (!$result) {
+                        if ($transaction_open && method_exists($db, 'rollback')) {
                             $db->rollback();
                         }
-                        error_log("Failed to insert YouCan order {$order['id']}");
+                        error_log("YouCan sync: failed to insert order {$order['id']}");
+                        continue;
                     }
+
+                    // ═════════════════════════════════════════════
+                    // Order items
+                    // ═════════════════════════════════════════════
+                    $order_pk = $db->getLastInsertId();
+                    $new_order_ids[] = $order_pk;
+
+                    if (!empty($order['variants']) && is_array($order['variants'])) {
+                        foreach ($order['variants'] as $variant_item) {
+
+                            $product_name = $variant_item['product_name']
+                                ?? $variant_item['product']['name']
+                                ?? $variant_item['name']
+                                ?? 'Unknown Product';
+
+                            $product_sku = $variant_item['sku']
+                                ?? $variant_item['product']['sku']
+                                ?? '';
+
+                            $unit_price = floatval($variant_item['price'] ?? $variant_item['unit_price'] ?? 0);
+                            $quantity   = intval($variant_item['quantity'] ?? 1);
+
+                            $item_data = [
+                                'order_id'     => $order_pk,
+                                'product_name' => $product_name,
+                                'product_sku'  => $product_sku,
+                                'quantity'     => $quantity,
+                                'unit_price'   => $unit_price,
+                                'total_price'  => $unit_price * $quantity,
+                                'weight'       => $variant_item['weight'] ?? $variant_item['product']['weight'] ?? null,
+                                'created_at'   => date('Y-m-d H:i:s'),
+                            ];
+
+                            $item_result = $db->insert('order_items', $item_data);
+
+                            if (!$item_result) {
+                                throw new Exception("Erreur lors de l'insertion de l'article: " . $product_name);
+                            }
+                        }
+                    }
+
+                    // ═════════════════════════════════════════════
+                    // Commit
+                    // ═════════════════════════════════════════════
+                    if ($transaction_open && method_exists($db, 'commit')) {
+                        $db->commit();
+                    }
+
+                    $orders_synced++;
+
+                    // ── AI Confirmation hook (non-blocking) ─────
+                    try {
+                        require_once __DIR__ . '/../ai_confirmation/core/ConfirmationService.php';
+                        \OBGecom\AiConfirmation\Core\ConfirmationService::enqueueForConfirmation(
+                            (int)$order_pk,
+                            (int)$store['id'],
+                            (int)$store['user_id']
+                        );
+                    } catch (\Throwable $__ai_ex) {
+                        error_log('[ai_confirmation] enqueue failed for YouCan order '
+                                . $order_pk . ': ' . $__ai_ex->getMessage());
+                    }
+                    // ────────────────────────────────────────────
+
+
                 } catch (Exception $e) {
-                    if (method_exists($db, 'rollback')) {
+                    if ($transaction_open && method_exists($db, 'rollback')) {
                         $db->rollback();
                     }
-                    error_log("Transaction failed for YouCan order {$order['id']}: " . $e->getMessage());
+                    error_log("YouCan sync: transaction failed for order {$order['id']}: " . $e->getMessage());
                     throw $e;
                 }
+
             } catch (Exception $e) {
-                error_log("Error processing YouCan order {$order['id']}: " . $e->getMessage());
+                error_log("YouCan sync: error processing order {$order['id']}: " . $e->getMessage());
+                // Keep going — one bad order shouldn't stop the sync
             }
         }
-        
+
         $page++;
+        usleep(300000); // 300ms politeness delay between pages
     }
-    
-    error_log("Total YouCan orders synchronized: " . $orders_synced);
-    error_log("Total YouCan orders updated: " . $orders_updated);
-    
+
+    if ($page > $max_pages && $has_more) {
+        error_log("YouCan sync: reached max_pages cap ({$max_pages}) — stopping early (more orders available)");
+    }
+
+    error_log("YouCan sync: done — {$orders_synced} synced, {$orders_updated} updated, " . count($new_order_ids) . " new ids");
+
+    // ─────────────────────────────────────────────────────────────
+    // Distribution (unchanged behaviour, wrapped in try/catch)
+    // ─────────────────────────────────────────────────────────────
     $distribution_result = ['success' => false, 'distributed' => 0];
-    
+
     if ($orders_synced > 0) {
         try {
-            require_once ('./distribute_orders_function.php');
-            
-            $distributor = new OrderDistributor($db, $store['user_id'], $store['id']);
-            $distribution_result = $distributor->distributeOrders();
-            
-            if ($distribution_result['success']) {
-                error_log("YouCan orders distributed successfully: " . $distribution_result['message']);
+            $distribution_method = getDistributionMethod($db, $store['user_id']);
+
+            if ($distribution_method === 'performance') {
+
+                $distribute_file = __DIR__ . '/distribute_orders_function.php';
+                if (file_exists($distribute_file)) {
+                    require_once($distribute_file);
+
+                    $distributor = new OrderDistributor($db, $store['user_id'], $store['id']);
+                    $distribution_result = $distributor->distributeOrders();
+
+                    if (!empty($distribution_result['success'])) {
+                        error_log("YouCan sync: distribution OK — " . ($distribution_result['message'] ?? ''));
+                    } else {
+                        error_log("YouCan sync: distribution failed — " . ($distribution_result['message'] ?? 'unknown'));
+                    }
+                } else {
+                    error_log("YouCan sync: distribute_orders_function.php not found");
+                }
             } else {
-                error_log("YouCan order distribution failed: " . $distribution_result['message']);
+                error_log("YouCan sync: distribution method is 'manual' — skipping auto-distribution");
+                $distribution_result = [
+                    'success'     => true,
+                    'message'     => 'YouCan orders synchronized. Manual distribution required.',
+                    'distributed' => 0,
+                    'method'      => 'manual',
+                ];
             }
-            
+
         } catch (Exception $e) {
-            error_log("Error during YouCan order distribution: " . $e->getMessage());
+            error_log("YouCan sync: distribution error — " . $e->getMessage());
             $distribution_result = [
-                'success' => false,
-                'message' => 'Distribution failed: ' . $e->getMessage(),
-                'distributed' => 0
+                'success'     => false,
+                'message'     => 'Distribution failed: ' . $e->getMessage(),
+                'distributed' => 0,
             ];
         }
     }
-    
+
     return [
-        'synced' => $orders_synced,
-        'updated' => $orders_updated,
-        'distribution' => $distribution_result
+        'synced'        => $orders_synced,
+        'updated'       => $orders_updated,
+        'new_order_ids' => $new_order_ids,
+        'distribution'  => $distribution_result,
     ];
+}
+
+function getYouCanCustomerInfo(array $order): array {
+    $customer         = $order['customer']         ?? null;
+    $shipping_address = $order['shipping_address'] ?? ($order['shipping']['address'] ?? null);
+    $billing_address  = $order['billing_address']  ?? ($order['billing']['address']  ?? null);
+
+    // ─────────────────────────────────────────────────────────────
+    // If no dedicated shipping_address exists, treat the customer
+    // object itself as the address source (YouCan commonly stores
+    // address fields directly on customer).
+    // ─────────────────────────────────────────────────────────────
+    $address_source = null;
+    if (is_array($shipping_address)) {
+        $address_source = $shipping_address;
+    } elseif (is_array($billing_address)) {
+        $address_source = $billing_address;
+    } elseif (is_array($customer)) {
+        $address_source = $customer;
+    }
+
+    // ---- Name ----
+    $name = '';
+    if (is_array($customer)) {
+        if (!empty($customer['full_name'])) {
+            $name = trim($customer['full_name']);
+        } elseif (!empty($customer['first_name']) || !empty($customer['last_name'])) {
+            $name = trim(($customer['first_name'] ?? '') . ' ' . ($customer['last_name'] ?? ''));
+        } elseif (!empty($customer['name'])) {
+            $name = trim($customer['name']);
+        }
+    }
+    if ($name === '' && is_array($address_source)) {
+        if (!empty($address_source['full_name'])) {
+            $name = trim($address_source['full_name']);
+        } elseif (!empty($address_source['first_name']) || !empty($address_source['last_name'])) {
+            $name = trim(($address_source['first_name'] ?? '') . ' ' . ($address_source['last_name'] ?? ''));
+        }
+    }
+    if ($name === '') {
+        $name = "Client " . ($order['ref'] ?? $order['id'] ?? 'unknown');
+    }
+
+    // ---- Email ----
+    $email = '';
+    if (is_array($customer) && !empty($customer['email'])) {
+        $email = trim($customer['email']);
+    } elseif (!empty($order['email'])) {
+        $email = trim($order['email']);
+    }
+
+    // ---- Phone ----
+    $phone = '';
+    if (is_array($customer) && !empty($customer['phone'])) {
+        $phone = $customer['phone'];
+    } elseif (is_array($address_source) && !empty($address_source['phone'])) {
+        $phone = $address_source['phone'];
+    }
+
+    // ---- City ----
+    $city = 'Non renseigné';
+    if (is_array($address_source) && !empty($address_source['city'])) {
+        $city = $address_source['city'];
+    } elseif (is_array($customer) && !empty($customer['city'])) {
+        $city = $customer['city'];
+    }
+
+    // ---- Formatted addresses ----
+    // Use whatever source we resolved; always an array now.
+    $shipping_formatted = is_array($address_source)
+        ? formatYouCanAddress($address_source)
+        : "Commande YouCan #" . ($order['ref'] ?? $order['id'] ?? 'unknown');
+
+    $billing_formatted = is_array($billing_address)
+        ? formatYouCanAddress($billing_address)
+        : $shipping_formatted;
+
+    return [
+        'name'                       => $name,
+        'email'                      => $email,
+        'phone'                      => $phone,
+        'city'                       => $city,
+        'shipping_address_formatted' => $shipping_formatted,
+        'billing_address_formatted'  => $billing_formatted,
+    ];
+}
+
+/**
+ * Convert YouCan datetime format to MySQL datetime format
+ * @param string $youcan_datetime Format: 2026-04-08T11:53:17+00:00
+ * @return string Format: 2026-04-08 11:53:17
+*/
+function convertYouCanDateTime($youcan_datetime) {
+    if (empty($youcan_datetime)) {
+        return date('Y-m-d H:i:s');
+    }
+    
+    // Remove the timezone part (+00:00 or Z) and replace T with space
+    $datetime = preg_replace('/\+[0-9]{2}:[0-9]{2}$/', '', $youcan_datetime);
+    $datetime = str_replace('T', ' ', $datetime);
+    $datetime = str_replace('Z', '', $datetime);
+    
+    // Validate the datetime
+    $timestamp = strtotime($datetime);
+    if ($timestamp === false) {
+        error_log("Invalid datetime format: " . $youcan_datetime);
+        return date('Y-m-d H:i:s');
+    }
+    
+    return date('Y-m-d H:i:s', $timestamp);
+}
+
+function mapYouCanOrderStatus($order) {
+    // Check shipping status first - if fulfilled, it's delivered/shipped
+    $shipping_status = null;
+    if (isset($order['shipping']['status'])) {
+        $shipping_status = $order['shipping']['status'];
+    } elseif (isset($order['shipping_status'])) {
+        $shipping_status = $order['shipping_status'] === 'fulfilled' ? 1 : 2;
+    }
+    
+    // If shipping status is fulfilled (1) or delivered, order is confirmed
+    if ($shipping_status == 1) {
+        return 'confirmed';
+    }
+    
+    // Check order status (1 = open, 2 = closed)
+    if (isset($order['status'])) {
+        if ($order['status'] == 2) {
+            // Closed order - could be cancelled or completed
+            // Check if it was fulfilled
+            if ($shipping_status == 1) {
+                return 'confirmed';
+            }
+            return 'cancelled';
+        }
+        if ($order['status'] == 1) {
+            return 'new-order';
+        }
+    }
+    
+    // Check confirmation_status if available
+    if (isset($order['confirmation_status'])) {
+        if ($order['confirmation_status'] === 'closed') {
+            return 'cancelled';
+        }
+        if ($order['confirmation_status'] === 'open') {
+            return 'new-order';
+        }
+    }
+    
+    // Default: treat as new order
+    return 'new-order';
+}
+
+function mapYouCanShippingStatus($status_code) {
+    $status_map = [
+        0 => 'not_submitted',
+        1 => 'delivered',
+        2 => 'pending',      // <-- changed from 'delivered'
+        3 => 'failed_delivery',
+        4 => 'returned'
+    ];
+    return $status_map[$status_code] ?? 'not_submitted';
+}
+
+function mapYouCanPaymentStatus($status_code) {
+    $status_map = [
+        1 => 'paid',           // Paid
+        2 => 'pending',        // Unpaid/Pending (this is the common case)
+        3 => 'refunded',       // Refunded
+        4 => 'failed',         // Failed
+        5 => 'pending',        // Pending
+        6 => 'authorized'      // Authorized
+    ];
+    
+    return $status_map[$status_code] ?? 'pending';
 }
 
 function formatYouCanAddress($address_data) {
     if (!$address_data || !is_array($address_data)) {
         return '';
     }
-    
-    $address_parts = [];
-    
-    // Add name
-    if (!empty($address_data['name'])) {
-        $address_parts[] = trim($address_data['name']);
+
+    $parts = [];
+
+    // ─────────────────────────────────────────────────────────
+    // 1. Name line
+    // ─────────────────────────────────────────────────────────
+    if (!empty($address_data['full_name'])) {
+        $parts[] = trim($address_data['full_name']);
     } elseif (!empty($address_data['first_name']) || !empty($address_data['last_name'])) {
         $name = trim(($address_data['first_name'] ?? '') . ' ' . ($address_data['last_name'] ?? ''));
-        if (!empty($name)) {
-            $address_parts[] = $name;
+        if ($name !== '') $parts[] = $name;
+    }
+
+    // ─────────────────────────────────────────────────────────
+    // 2. Street address — check every known key
+    // ─────────────────────────────────────────────────────────
+    $street_line1 = '';
+    foreach (['first_line', 'address', 'address_1', 'street'] as $key) {
+        if (!empty($address_data[$key]) && is_string($address_data[$key])) {
+            $street_line1 = trim($address_data[$key]);
+            break;
         }
     }
-    
-    // Add address line
-    if (!empty($address_data['address'])) {
-        $address_parts[] = trim($address_data['address']);
-    } elseif (!empty($address_data['address_1'])) {
-        $address_parts[] = trim($address_data['address_1']);
-        if (!empty($address_data['address_2'])) {
-            $address_parts[] = trim($address_data['address_2']);
+
+    $street_line2 = '';
+    foreach (['second_line', 'address_2', 'address_2_line'] as $key) {
+        if (!empty($address_data[$key]) && is_string($address_data[$key])) {
+            $street_line2 = trim($address_data[$key]);
+            break;
         }
     }
-    
-    // Add city and postal code
-    if (!empty($address_data['city'])) {
-        $city_line = $address_data['city'];
-        if (!empty($address_data['postal_code']) || !empty($address_data['zip'])) {
-            $city_line .= ' ' . ($address_data['postal_code'] ?? $address_data['zip']);
-        }
-        $address_parts[] = $city_line;
-    }
-    
-    // Add country
-    if (!empty($address_data['country'])) {
-        $address_parts[] = trim($address_data['country']);
-    }
-    
-    return implode(', ', array_filter($address_parts));
-}
 
-function mapYouCanOrderStatus($status, $shipping_status = null, $confirmation_status = null) {
-    // Check if order is closed/cancelled
-    if ($confirmation_status === 'closed' || $status == 2) {
-        return 'cancelled';
-    }
-
-    // Check if order is fulfilled
-    if ($shipping_status === 'fulfilled') {
-        return 'confirmed';
-    }
-
-    // Default to new order for open status
-    if ($status == 1) {
-        return 'new-order';
-    }
-
-    // Fallback
-    return 'new-order';
-}
-
-function mapYouCanShippingStatus($status) {
-    $status_map = [
-        1 => 'in_progress',   // shipped or in transit
-        2 => 'not_submitted', // not yet shipped
-    ];
-
-    return $status_map[$status] ?? 'not_submitted';
-}
-
-function mapYouCanPaymentStatus($status) {
-    $status_map = [
-        1 => 'paid',
-        5 => 'pending',
-        // Add more as needed
-    ];
-    
-    return $status_map[$status] ?? 'pending';
-}
-
-/**
- * Extract shipping information from YouCan order
- */
-function extractYouCanShippingInfo($order, $db) {
-    $shipping_info = [
-        'tracking_number' => null,
-        'shipping_company' => null,
-        'shipping_company_logo' => null,
-        'shipping_company_website' => null
-    ];
-    
-    // Check for tracking number in order
-    if (!empty($order['tracking_number'])) {
-        $shipping_info['tracking_number'] = $order['tracking_number'];
-    } elseif (!empty($order['tracking_code'])) {
-        $shipping_info['tracking_number'] = $order['tracking_code'];
-    }
-    
-    // Try to match shipping company
-    if (!empty($order['shipping_company'])) {
-        $company_name = $order['shipping_company'];
-        
-        $company = $db->getThisQuery(
-            "SELECT id, name, logo_url, website FROM shipping_companies WHERE LOWER(name) = LOWER(?)",
-            [$company_name]
-        );
-        
-        if (!empty($company)) {
-            $shipping_info['shipping_company'] = $company[0]['id'];
-            $shipping_info['shipping_company_logo'] = $company[0]['logo_url'];
-            $shipping_info['shipping_company_website'] = $company[0]['website'];
+    // ─────────────────────────────────────────────────────────
+    // 3. Region — used as address fallback if no street exists
+    // ─────────────────────────────────────────────────────────
+    $region = '';
+    foreach (['region', 'state', 'province', 'quartier'] as $key) {
+        if (!empty($address_data[$key]) && is_string($address_data[$key])) {
+            $region = trim($address_data[$key]);
+            break;
         }
     }
-    
-    return $shipping_info;
-}
 
-/**
- * Map YouCan order status to standard status
- */
-function mapYouCanStatus($status) {
-    $status_map = [
-        'pending'     => 'new-order',
-        'confirmed'   => 'confirmed',
-        'processing'  => 'confirmed',
-        'shipped'     => 'confirmed',
-        'delivered'   => 'confirmed',
-        'cancelled'   => 'cancelled',
-        'refunded'    => 'cancelled',
-        'failed'      => 'unreachable'
-    ];
-    
-    return $status_map[$status] ?? 'new-order';
+    // ─────────────────────────────────────────────────────────
+    // 4. Add the address block — street if we have it, else region
+    // ─────────────────────────────────────────────────────────
+    if ($street_line1 !== '') {
+        $parts[] = $street_line1;
+        if ($street_line2 !== '') {
+            $parts[] = $street_line2;
+        }
+    } elseif ($region !== '') {
+        // No street → use region (quartier) as the address
+        $parts[] = $region;
+    } else {
+        // Last resort — YouCan's pre-built location string
+        $location = trim((string)($address_data['location'] ?? ''), " ,\t\n\r\0\x0B");
+        if ($location !== '') {
+            $parts[] = $location;
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────
+    // 5. City + zip
+    // ─────────────────────────────────────────────────────────
+    $city = '';
+    foreach (['city', 'town'] as $key) {
+        if (!empty($address_data[$key]) && is_string($address_data[$key])) {
+            $city = trim($address_data[$key]);
+            break;
+        }
+    }
+
+    $zip = '';
+    foreach (['zip_code', 'postal_code', 'zip'] as $key) {
+        if (!empty($address_data[$key]) && is_string($address_data[$key])) {
+            $zip = trim($address_data[$key]);
+            break;
+        }
+    }
+
+    if ($city !== '') {
+        $city_line = $city;
+        if ($zip !== '') $city_line .= ' ' . $zip;
+        $parts[] = $city_line;
+    } elseif ($zip !== '') {
+        $parts[] = $zip;
+    }
+
+    // ─────────────────────────────────────────────────────────
+    // 6. Country
+    // ─────────────────────────────────────────────────────────
+    $country = $address_data['country_name']
+            ?? $address_data['country']
+            ?? null;
+
+    if (is_array($country) && !empty($country['name'])) {
+        $country = $country['name'];
+    }
+    if (!empty($country) && is_string($country)) {
+        $parts[] = trim($country);
+    }
+
+    // ─────────────────────────────────────────────────────────
+    // 7. Clean up: trim, drop empties, de-dupe consecutive
+    // ─────────────────────────────────────────────────────────
+    $parts = array_values(array_filter(
+        array_map('trim', $parts),
+        fn($v) => $v !== ''
+    ));
+
+    $unique = [];
+    foreach ($parts as $p) {
+        if (empty($unique) || end($unique) !== $p) {
+            $unique[] = $p;
+        }
+    }
+
+    return implode(', ', $unique);
 }
 
 /**
@@ -843,16 +1164,27 @@ function syncWooCommerceOrders($db, $store) {
     
     if ($orders_synced > 0) {
         try {
-            // Include the distribution function (make sure it's available)
-            require_once ('./distribute_orders_function.php');
+            $distribution_method = getDistributionMethod($db, $store['user_id']);
             
-            $distributor = new OrderDistributor($db, $store['user_id'], $store['id']);
-            $distribution_result = $distributor->distributeOrders();
-            
-            if ($distribution_result['success']) {
-                error_log("Orders distributed successfully: " . $distribution_result['message']);
+            if ($distribution_method === 'performance') {
+                require_once ('./distribute_orders_function.php');
+                
+                $distributor = new OrderDistributor($db, $store['user_id'], $store['id']);
+                $distribution_result = $distributor->distributeOrders();
+                
+                if ($distribution_result['success']) {
+                    error_log("Orders distributed successfully: " . $distribution_result['message']);
+                } else {
+                    error_log("Order distribution failed: " . $distribution_result['message']);
+                }
             } else {
-                error_log("Order distribution failed: " . $distribution_result['message']);
+                error_log("Distribution method is 'manual' - skipping automatic distribution for WooCommerce");
+                $distribution_result = [
+                    'success' => true,
+                    'message' => 'WooCommerce orders synchronized. Manual distribution required.',
+                    'distributed' => 0,
+                    'method' => 'manual'
+                ];
             }
             
         } catch (Exception $e) {
@@ -996,7 +1328,8 @@ function getOzonExpressStatus($tracking_number, $company_data) {
 
 /**
  * Map OzonExpress status to our internal status
- */
+*/
+
 function mapOzonExpressStatus($status) {
     $status_map = [
         'non soumis'             => 'not_submitted',
@@ -1175,10 +1508,9 @@ function getMonthlyOrderUsage($db, $user_id) {
     return $result[0];
 }
 
-
 /**
  * Update monthly order usage
- */
+*/
 
 function updateMonthlyOrderUsage($db, $user_id, $orders_count) {
     $current_month = date('Y-m');
@@ -1214,9 +1546,10 @@ function updateMonthlyOrderUsage($db, $user_id, $orders_count) {
 
 /**
  * Synchronize orders from Shopify store
- */
+*/
 function syncShopifyOrders($db, $store) {
     $shop_domain = rtrim($store['domain'], '/');
+    $store['api_key'] = refreshShopifyToken($db, $store);
     $access_token = $store['api_key'];
     
     // Shopify Admin API endpoint for orders
@@ -1330,13 +1663,11 @@ function syncShopifyOrders($db, $store) {
                     'handled_at'           => null
                 ];
                 
-                error_log("Inserting Shopify order data: " . json_encode($order_data));
                 
                 $result = $db->insert('orders', $order_data);
                 
                 if ($result) {
                     $order_id = $db->getLastInsertId();
-                    error_log("Shopify order inserted with ID: " . $order_id);
                     
                     // Insert order items
                     if (isset($order['line_items']) && is_array($order['line_items'])) {
@@ -1362,7 +1693,6 @@ function syncShopifyOrders($db, $store) {
                     
                     $db->commit();
                     $orders_synced++;
-                    error_log("Shopify order {$order['id']} synchronized successfully");
                     
                     // Update shipping status for new order if tracking info exists
                     if ($shipping_info['tracking_number'] && $shipping_info['shipping_company']) {
@@ -1374,13 +1704,23 @@ function syncShopifyOrders($db, $store) {
                         ];
                         updateOrderShippingStatus($db, $new_order_data);
                     }
+
+                    try {
+                        require_once __DIR__ . '/../ai_confirmation/core/ConfirmationService.php';
+                        \OBGecom\AiConfirmation\Core\ConfirmationService::enqueueForConfirmation(
+                            (int)$order_id,
+                            (int)$store['id'],
+                            (int)$store['user_id']
+                        );
+                    } catch (\Throwable $__ai_ex) {
+                        error_log('[ai_confirmation] enqueue failed for Shopify order '. $order_id . ': ' . $__ai_ex->getMessage());
+                    }
+
                 } else {
                     $db->rollback();
-                    error_log("Failed to insert Shopify order {$order['id']}");
                 }
             } catch (Exception $e) {
                 $db->rollback();
-                error_log("Transaction failed for Shopify order {$order['id']}: " . $e->getMessage());
                 throw $e;
             }
         } catch (Exception $e) {
@@ -1395,15 +1735,27 @@ function syncShopifyOrders($db, $store) {
     
     if ($orders_synced > 0) {
         try {
-            require_once ('./distribute_orders_function.php');
+            $distribution_method = getDistributionMethod($db, $store['user_id']);
             
-            $distributor = new OrderDistributor($db, $store['user_id'], $store['id']);
-            $distribution_result = $distributor->distributeOrders();
-            
-            if ($distribution_result['success']) {
-                error_log("Shopify orders distributed successfully: " . $distribution_result['message']);
+            if ($distribution_method === 'performance') {
+                require_once ('./distribute_orders_function.php');
+                
+                $distributor = new OrderDistributor($db, $store['user_id'], $store['id']);
+                $distribution_result = $distributor->distributeOrders();
+                
+                if ($distribution_result['success']) {
+                    error_log("Shopify orders distributed successfully: " . $distribution_result['message']);
+                } else {
+                    error_log("Shopify order distribution failed: " . $distribution_result['message']);
+                }
             } else {
-                error_log("Shopify order distribution failed: " . $distribution_result['message']);
+                error_log("Distribution method is 'manual' - skipping automatic distribution for Shopify");
+                $distribution_result = [
+                    'success' => true,
+                    'message' => 'Shopify orders synchronized. Manual distribution required.',
+                    'distributed' => 0,
+                    'method' => 'manual'
+                ];
             }
             
         } catch (Exception $e) {
@@ -1421,6 +1773,58 @@ function syncShopifyOrders($db, $store) {
         'updated' => $orders_updated,
         'distribution' => $distribution_result
     ];
+}
+
+function refreshShopifyToken($db, $store) {
+    // Only refresh if token is missing or close to expiry
+    if (!empty($store['token_expires_at']) &&
+        strtotime($store['token_expires_at']) > time() + 120) {
+        return $store['api_key']; // still valid, nothing to do
+    }
+
+    if (empty($store['refresh_token'])) {
+        throw new Exception('Aucun refresh token disponible — reconnexion requise');
+    }
+
+    $token_url = "https://{$store['domain']}/admin/oauth/access_token";
+    $post_fields = [
+        'client_id'     => SHOPIFY_CLIENT_ID,
+        'client_secret' => SHOPIFY_CLIENT_SECRET,
+        'grant_type'    => 'refresh_token',
+        'refresh_token' => $store['refresh_token']
+    ];
+
+    $ch = curl_init($token_url);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_POST, true);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($post_fields));
+    curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json']);
+    $response = curl_exec($ch);
+    $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    $result = json_decode($response, true);
+
+    if ($http_code !== 200 || !isset($result['access_token'])) {
+        error_log("Shopify token refresh failed for store {$store['id']}: " . $response);
+        // Mark store as needing manual reconnection
+        $db->update('stores', $store['id'], [
+            'is_connected' => 0,
+            'connection_error' => 'Token expiré, reconnexion requise'
+        ]);
+        throw new Exception('Impossible de rafraîchir le token Shopify — reconnexion requise');
+    }
+
+    $new_expires_at = date('Y-m-d H:i:s', time() + ($result['expires_in'] ?? 3600));
+
+    $db->update('stores', $store['id'], [
+        'api_key' => $result['access_token'],
+        'refresh_token' => $result['refresh_token'] ?? $store['refresh_token'],
+        'token_expires_at' => $new_expires_at,
+        'updated_at' => date('Y-m-d H:i:s')
+    ]);
+
+    return $result['access_token'];
 }
 
 /**
@@ -1552,6 +1956,35 @@ function mapShopifyPaymentStatus($financial_status) {
     ];
     
     return $status_map[$financial_status] ?? 'pending';
+}
+
+// function to get the distribution method
+function getDistributionMethod($db, $user_id) {
+    // First try to get user-specific setting
+    $user_setting = $db->getThisQuery(
+        "SELECT setting_value FROM system_settings 
+         WHERE user_id = ? AND setting_key = 'distribution_method' 
+         LIMIT 1",
+        [$user_id]
+    );
+    
+    if (!empty($user_setting)) {
+        return $user_setting[0]['setting_value'];
+    }
+    
+    // If no user-specific setting, check for global setting (user_id = 0 or NULL)
+    $global_setting = $db->getThisQuery(
+        "SELECT setting_value FROM system_settings 
+         WHERE (user_id = 0 OR user_id IS NULL) AND setting_key = 'distribution_method' 
+         LIMIT 1"
+    );
+    
+    if (!empty($global_setting)) {
+        return $global_setting[0]['setting_value'];
+    }
+    
+    // Default to 'performance' if no setting found
+    return 'performance';
 }
 
 function getCurrentUserId($db) {

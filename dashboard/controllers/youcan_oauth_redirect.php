@@ -27,15 +27,16 @@ $_SESSION['youcan_store_domain'] = $domain;
 error_log("YouCan OAuth initiated - Store: $storeName, Domain: $domain, State: $state");
 
 // YouCan OAuth configuration
-$client_id = "1757";
+$client_id = "2310";
 $redirect_uri = "https://obgecom.com/dashboard/controllers/youcan_callback.php";
 
 // Build authorization URL with correct YouCan format
-// Use scope[]=* to request all permissions (YouCan standard)
+$scopes = "read-orders edit-orders delete-orders read-products edit-products delete-products read-customers edit-customers delete-customers read-categories edit-categories";
+
 $auth_url = "https://seller-area.youcan.shop/admin/oauth/authorize?"
     . "client_id=" . urlencode($client_id)
     . "&response_type=code"
-    . "&scope[]=*"
+    . "&scope=" . urlencode($scopes)
     . "&redirect_uri=" . urlencode($redirect_uri)
     . "&state=" . urlencode($state);
 
@@ -45,20 +46,20 @@ echo json_encode([
 ]);
 
 function normalizeYouCanDomain($domain) {
+
     $domain = trim($domain);
-    
-    // Remove protocol if present
+
+    // remove http / https
     $domain = preg_replace('/^https?:\/\//', '', $domain);
-    
-    // Remove trailing slashes
+
+    // remove trailing slash
     $domain = rtrim($domain, '/');
-    
-    // For YouCan, domain should be like "store-name.youcan.shop"
-    if (!preg_match('/\.youcan\.shop$/i', $domain)) {
-        // If not a complete YouCan domain, assume it's the subdomain
-        $domain = $domain . '.youcan.shop';
+
+    // If user entered only store name
+    if (!str_contains($domain, '.')) {
+        $domain = $domain . '.youcan.store';
     }
-    
+
     return strtolower($domain);
 }
 ?>

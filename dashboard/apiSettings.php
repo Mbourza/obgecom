@@ -1000,6 +1000,7 @@
 
     // Shopify store auth
     async function initiateShopifyOAuth() {
+        
         const storeName = document.getElementById('store-name').value.trim();
         const rawDomain = document.getElementById('store-domain').value.trim();
         const domain = normalizeDomain(rawDomain);
@@ -1053,7 +1054,6 @@
             });
             
             const data = await res.json();
-
             if (data.success && data.auth_url) {
                 // Redirect to YouCan OAuth
                 window.location.href = data.auth_url;
@@ -1111,13 +1111,16 @@
     function createStoreCard(store) {
         const storeCard = document.createElement('div');
         const isConnected = store.is_connected || store.status === 'active';
-        const connectionStatus = isConnected ? 'Connecté' : 'Déconnecté';
         const statusClass = isConnected ? 'active' : 'inactive';
         const lastConnection = store.connected_at ? 
             new Date(store.connected_at).toLocaleString('fr-FR') : 
             (store.lastSync ? store.lastSync : 'Jamais');
         
         storeCard.className = `store-card ${statusClass}`;
+        
+        // Check if store has connection error
+        const hasError = store.connection_error && !isConnected;
+        const isShopify = store.platform === 'shopify';
         
         storeCard.innerHTML = `
             <div class="status-indicator status-${statusClass}"></div>
@@ -1129,19 +1132,33 @@
             <div class="store-domain">${store.domain}</div>
             <div class="connection-status">
                 <span style="color: ${isConnected ? '#27ae60' : '#e74c3c'}">
-                    ● ${connectionStatus}
+                    ● ${isConnected ? 'Connecté' : 'Déconnecté'}
                 </span>
+                ${hasError ? `
+                    <div style="color: #e74c3c; font-size: 12px; margin-top: 5px; background: #fde8e8; padding: 5px 10px; border-radius: 4px;">
+                        ⚠️ ${store.connection_error}
+                    </div>
+                ` : ''}
+                ${!isConnected && isShopify ? `
+                    <div style="color: #f39c12; font-size: 11px; margin-top: 3px;">
+                        💡 Cliquez sur "Reconnecter" pour renouveler l'accès
+                    </div>
+                ` : ''}
             </div>
             <div style="margin: 10px 0; font-size: 0.85rem; color: #7f8c8d;">
                 Dernière connexion: ${lastConnection}
             </div>
             <div class="store-actions">
-                ${!isConnected ? 
-                    `<button class="btn btn-success" onclick="connectStore(${store.id})">
-                        🔗 Connecter
+                ${!isConnected && isShopify ? 
+                    `<button class="btn btn-success" onclick="reconnectShopifyStore(${store.id})" style="background: #f39c12;">
+                        🔄 Reconnecter
                     </button>` : 
+                    isConnected ? 
                     `<button class="btn btn-warning" onclick="disconnectStore(${store.id})">
                         ⚠️ Déconnecter
+                    </button>` :
+                    `<button class="btn btn-secondary" onclick="viewStoreDetails(${store.id})" style="opacity: 0.6; cursor: not-allowed;" disabled>
+                        ⚠️ Non disponible
                     </button>`
                 }
                 <button class="btn btn-secondary" onclick="viewStoreDetails(${store.id})">
@@ -1187,22 +1204,45 @@
         }
     }
 
-    async function reconnectShopifyStore(store) {
-        // Implement Shopify reconnection logic
-        // This would typically involve re-initiating OAuth
-        const res = await fetch('./controllers/shopify_reconnect.php', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ store_id: store.id, domain: store.domain })
-        });
-        
-        const data = await res.json();
-        
-        if (data.success) {
-            store.is_connected = true;
-            store.connected_at = new Date().toISOString();
-        } else {
-            throw new Error(data.message || 'Shopify reconnection failed');
+    // Shopify reconnection function
+    async function reconnectShopifyStore(storeId) {
+        const store = stores.find(s => s.id === storeId);
+        if (!store) {
+            showAlert('Boutique non trouvée', 'danger');
+            return;
+        }
+
+        if (store.platform !== 'shopify') {
+            showAlert('Cette fonction est uniquement pour les boutiques Shopify', 'warning');
+            return;
+        }
+
+        try {
+            showAlert('Préparation de la reconnexion Shopify...', 'info');
+            
+            const response = await fetch('./controllers/shopify_reconnect.php', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    store_id: store.id,
+                    store_name: store.store_name || store.name,
+                    domain: store.domain
+                })
+            });
+
+            const data = await response.json();
+            
+            if (data.success && data.install_url) {
+                // Redirect to Shopify OAuth
+                window.location.href = data.install_url;
+            } else {
+                showAlert(data.message || 'Erreur lors de la reconnexion Shopify', 'danger');
+            }
+        } catch (error) {
+            console.error('Error reconnecting Shopify store:', error);
+            showAlert('Erreur lors de la reconnexion: ' + error.message, 'danger');
         }
     }
 

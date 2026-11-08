@@ -33,7 +33,7 @@
     /* Border radius */
     --radius-sm: 4px;
     --radius-md: 8px;
-    --radius-lg: 12px;
+    --radius-lg: 2px;
     
     /* Transitions */
     --transition-fast: all 0.2s ease;
@@ -205,7 +205,7 @@
   
   .stat-card {
     background-color: var(--white);
-    border-radius: var(--radius-lg);
+    border-radius: 2px;
     padding: 1.75rem;
     box-shadow: var(--shadow-sm);
     transition: var(--transition-normal);

@@ -83,6 +83,7 @@ try {
         
         foreach ($stores_result as $store) {
             $formatted_stores[] = [
+                
                 'id' => (int)$store['id'],
                 'user_id' => (int)$store['user_id'],
                 'storeName' => $store['storeName'],

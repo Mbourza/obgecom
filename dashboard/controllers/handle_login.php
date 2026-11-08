@@ -1,4 +1,4 @@
-<?php 
+<?php //handle_login.php
 if(file_exists(stream_resolve_include_path("../core/init.php"))) {
     require_once("../core/init.php");
 }
@@ -60,6 +60,7 @@ try {
     
     // First, check if user exists and validate password
     if ($user->find($username)) {
+        
         $userData = $user->data();
         $userType = $user->getUserType();
         
@@ -69,6 +70,8 @@ try {
             $isActive = false;
             
             if ($userType === 'agent') {
+                $isActive = $userData->is_active == 1;
+            } elseif ($userType === 'responsable') {
                 $isActive = $userData->is_active == 1;
             } else {
                 // For users, check multiple possible active fields (payment/subscription status)
@@ -113,7 +116,7 @@ try {
                             $responseData['email_verification_needed'] = true;
                             $responseData['verification_message'] = 'Veuillez vérifier votre adresse email pour accéder à toutes les fonctionnalités.';
                         }
-                    } else {
+                    } elseif ($userType === 'agent') {
                         $responseData = [
                             'success' => true,
                             'message' => 'Connexion réussie',
@@ -130,6 +133,23 @@ try {
                                 'is_verified' => $emailVerified
                             ],
                             'redirect' => './dashboard/agents/'
+                        ];
+                    } elseif ($userType === 'responsable') {
+                        $responseData = [
+                            'success' => true,
+                            'message' => 'Connexion réussie',
+                            'user' => [
+                                'id' => $userData->id,
+                                'username' => $userData->email, // Responsables use email as username
+                                'email' => $userData->email,
+                                'name' => $userData->name,
+                                'role' => 'responsable',
+                                'type' => 'responsable',
+                                'phone' => $userData->phone ?? '',
+                                'is_active' => $userData->is_active ?? 1,
+                                'is_verified' => $emailVerified
+                            ],
+                            'redirect' => './dashboard/responsables/home'
                         ];
                     }
                     
@@ -153,9 +173,14 @@ try {
                     $responseData['message'] = 'Votre compte est inactif. Veuillez effectuer le paiement ou contacter le support.';
                     $responseData['action_needed'] = 'payment_or_activation';
                     $responseData['redirect'] = './activate-account.php';
-                } else {
+                } elseif ($userType === 'agent') {
                     // Agent account inactive
                     $responseData['message'] = 'Votre compte agent est inactif. Veuillez contacter l\'administrateur.';
+                    $responseData['action_needed'] = 'contact_admin';
+                    $responseData['redirect'] = './contact-admin.php';
+                } elseif ($userType === 'responsable') {
+                    // Responsable account inactive
+                    $responseData['message'] = 'Votre compte responsable est inactif. Veuillez contacter l\'administrateur.';
                     $responseData['action_needed'] = 'contact_admin';
                     $responseData['redirect'] = './contact-admin.php';
                 }
